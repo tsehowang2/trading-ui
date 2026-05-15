@@ -5,71 +5,342 @@
 
 {% block head %}
 <style>
-    canvas { cursor: crosshair; background: #1e293b; border-radius: 8px; display: block; margin: 0 auto; }
-    .chart-container { overflow-x: auto; margin-bottom: 20px; }
-    .chart-tooltip {
-        position: fixed;
-        background: rgba(26,26,36,0.3);
-        backdrop-filter: blur(8px);
-        border: 1px solid rgba(42,42,53,0.8);
-        border-radius: 10px;
-        padding: 10px 14px;
-        font-family: 'JetBrains Mono','SF Mono',monospace;
-        font-size: 12px;
-        line-height: 1.5;
-        color: #e0e0e0;
-        box-shadow: 0 8px 20px rgba(0,0,0,0.6);
-        pointer-events: none;
-        z-index: 10000;
-        display: none;
-        white-space: nowrap;
+/* ══════════════════════════════════════════════════════════════════════════
+   BACKTEST - MOBILE-FIRST RESPONSIVE STYLES
+   ══════════════════════════════════════════════════════════════════════════ */
+
+canvas { 
+    cursor: crosshair; 
+    background: #1e293b; 
+    border-radius: 8px; 
+    display: block; 
+    margin: 0 auto;
+    max-width: 100%;
+    height: auto !important;
+}
+
+.chart-container { 
+    overflow-x: auto; 
+    margin-bottom: 1rem;
+    -webkit-overflow-scrolling: touch;
+}
+
+.chart-tooltip {
+    position: fixed;
+    background: rgba(26,26,36,0.9);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(42,42,53,0.8);
+    border-radius: 8px;
+    padding: 0.625rem 0.875rem;
+    font-family: 'JetBrains Mono','SF Mono',monospace;
+    font-size: 0.7rem;
+    line-height: 1.4;
+    color: #e0e0e0;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+    pointer-events: none;
+    z-index: 10000;
+    display: none;
+    white-space: nowrap;
+    max-width: 90vw;
+}
+
+.chart-tooltip strong { 
+    color:#00ff9d; 
+    font-size:0.75rem; 
+    display:block; 
+    margin-bottom:0.375rem; 
+    border-bottom:1px solid #2a2a35; 
+    padding-bottom:0.25rem;
+}
+
+.positive { color: #00ff9d; }
+.negative { color: #ff4d4d; }
+
+.card { 
+    background: #1a1a1f; 
+    border: none; 
+    margin-bottom: 1rem; 
+    color: #f8f9fa;
+    padding: 0.875rem;
+}
+
+.controls { 
+    display: flex; 
+    flex-wrap: wrap; 
+    gap: 0.5rem; 
+    align-items: center;
+}
+
+.controls > * { 
+    flex: 0 0 auto;
+}
+
+.controls .input-group {
+    width: auto;
+    min-width: 140px;
+}
+
+.controls .form-select,
+.controls .form-control {
+    min-width: 80px;
+    font-size: 0.85rem;
+}
+
+.controls h4 {
+    font-size: 1.1rem;
+    margin: 0;
+    flex: 1 1 100%;
+    margin-bottom: 0.5rem;
+}
+
+/* ────────────────────────────────────────────────────────────────────────── 
+   METRIC PANELS
+   ────────────────────────────────────────────────────────────────────────── */
+.metric-grid { 
+    display: grid; 
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); 
+    gap: 0.5rem;
+}
+
+.metric-box { 
+    background: #0d0d12; 
+    border: 1px solid #2a2a35; 
+    border-radius: 6px; 
+    padding: 0.625rem 0.875rem;
+}
+
+.metric-box .m-label { 
+    font-size: 0.65rem; 
+    color: #64748b; 
+    text-transform: uppercase; 
+    letter-spacing: 0.03em; 
+    margin-bottom: 0.25rem;
+    line-height: 1.2;
+}
+
+.metric-box .m-value { 
+    font-size: 1rem; 
+    font-weight: 700; 
+    font-family: 'JetBrains Mono', monospace;
+    line-height: 1.2;
+    word-break: break-word;
+}
+
+.up  { color: #10b981; } 
+.dn  { color: #ef4444; } 
+.neu { color: #94a3b8; }
+
+/* ────────────────────────────────────────────────────────────────────────── 
+   SECTIONS
+   ────────────────────────────────────────────────────────────────────────── */
+.bt-section { 
+    background: #1a1a1f; 
+    border: 1px solid #2a2a35; 
+    border-radius: 8px; 
+    padding: 0.875rem 1rem; 
+    margin-bottom: 1rem;
+}
+
+.bt-section h6 { 
+    color: #94a3b8; 
+    font-size: 0.7rem; 
+    text-transform: uppercase; 
+    letter-spacing: 0.04em; 
+    margin-bottom: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.bt-section h6 i {
+    font-size: 0.85rem;
+}
+
+/* ────────────────────────────────────────────────────────────────────────── 
+   RESPONSIVE TABLES
+   ────────────────────────────────────────────────────────────────────────── */
+.bt-table { 
+    width: 100%; 
+    border-collapse: collapse; 
+    font-size: 0.75rem;
+    min-width: 700px;
+}
+
+.bt-table th { 
+    color: #64748b; 
+    font-weight: 500; 
+    padding: 0.375rem 0.5rem; 
+    text-align: right; 
+    border-bottom: 1px solid #2a2a35; 
+    white-space: nowrap;
+    font-size: 0.7rem;
+}
+
+.bt-table th:first-child { 
+    text-align: left;
+}
+
+.bt-table td { 
+    padding: 0.375rem 0.5rem; 
+    text-align: right; 
+    border-bottom: 1px solid #14141a; 
+    white-space: nowrap;
+}
+
+.bt-table td:first-child { 
+    text-align: left; 
+    font-weight: 600;
+}
+
+.bt-table tr:last-child td { 
+    border-bottom: none;
+}
+
+.bt-table tr.strat-row { 
+    background: rgba(59,130,246,.07);
+}
+
+.beat-badge { 
+    font-size: 0.65rem; 
+    background: rgba(16,185,129,.15); 
+    color: #10b981; 
+    border-radius: 4px; 
+    padding: 0.125rem 0.375rem; 
+    margin-left: 0.25rem;
+    white-space: nowrap;
+}
+
+.action-buy  { color: #00ff9d; } 
+.action-sell { color: #ff4d4d; }
+
+#resultsPanel { 
+    display: none;
+}
+
+/* ────────────────────────────────────────────────────────────────────────── 
+   RESPONSIVE BREAKPOINTS
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Larger phones: 390px+ */
+@media (min-width: 390px) {
+    .card {
+        padding: 1rem;
     }
-    .chart-tooltip strong { color:#00ff9d; font-size:13px; display:block; margin-bottom:6px; border-bottom:1px solid #2a2a35; padding-bottom:4px; }
-    .positive { color: #00ff9d; }
-    .negative { color: #ff4d4d; }
-    .card { background: #1a1a1f; border: none; margin-bottom: 20px; color: #f8f9fa; }
-    .controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
-    .controls > * { flex: 0 0 auto; }
-    /* ── New panels ── */
-    .metric-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:8px; }
-    .metric-box { background:#0d0d12; border:1px solid #2a2a35; border-radius:8px; padding:10px 14px; }
-    .metric-box .m-label { font-size:.72rem; color:#64748b; text-transform:uppercase; letter-spacing:.04em; margin-bottom:4px; }
-    .metric-box .m-value { font-size:1.15rem; font-weight:700; font-family:'JetBrains Mono',monospace; }
-    .up  { color:#10b981; } .dn { color:#ef4444; } .neu { color:#94a3b8; }
-    .bt-section { background:#1a1a1f; border:1px solid #2a2a35; border-radius:10px; padding:16px 18px; margin-bottom:16px; }
-    .bt-section h6 { color:#94a3b8; font-size:.75rem; text-transform:uppercase; letter-spacing:.06em; margin-bottom:12px; }
-    .bt-table { width:100%; border-collapse:collapse; font-size:.82rem; }
-    .bt-table th { color:#64748b; font-weight:500; padding:5px 8px; text-align:right; border-bottom:1px solid #2a2a35; white-space:nowrap; }
-    .bt-table th:first-child { text-align:left; }
-    .bt-table td { padding:5px 8px; text-align:right; border-bottom:1px solid #14141a; white-space:nowrap; }
-    .bt-table td:first-child { text-align:left; font-weight:600; }
-    .bt-table tr:last-child td { border-bottom:none; }
-    .bt-table tr.strat-row { background:rgba(59,130,246,.07); }
-    .beat-badge { font-size:.68rem; background:rgba(16,185,129,.15); color:#10b981; border-radius:4px; padding:1px 5px; margin-left:4px; }
-    .action-buy  { color:#00ff9d; } .action-sell { color:#ff4d4d; }
-    #resultsPanel { display:none; }
+    
+    .metric-grid {
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    }
+    
+    .metric-box {
+        padding: 0.75rem 1rem;
+    }
+    
+    .metric-box .m-value {
+        font-size: 1.05rem;
+    }
+    
+    .bt-section {
+        padding: 1rem 1.25rem;
+    }
+    
+    .bt-table {
+        font-size: 0.8rem;
+    }
+    
+    .bt-table th,
+    .bt-table td {
+        padding: 0.5rem 0.625rem;
+    }
+}
+
+/* Tablets: 768px+ */
+@media (min-width: 768px) {
+    .controls h4 {
+        font-size: 1.25rem;
+        flex: 0 1 auto;
+        margin-bottom: 0;
+        margin-right: auto;
+    }
+    
+    .card {
+        padding: 1.25rem;
+    }
+    
+    .metric-grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 0.625rem;
+    }
+    
+    .metric-box {
+        padding: 0.75rem 1rem;
+    }
+    
+    .metric-box .m-label {
+        font-size: 0.7rem;
+    }
+    
+    .metric-box .m-value {
+        font-size: 1.15rem;
+    }
+    
+    .bt-section {
+        padding: 1rem 1.25rem;
+        margin-bottom: 1.25rem;
+    }
+    
+    .bt-section h6 {
+        font-size: 0.75rem;
+        margin-bottom: 0.875rem;
+    }
+    
+    .bt-table {
+        font-size: 0.82rem;
+    }
+}
+
+/* Desktop: 1024px+ */
+@media (min-width: 1024px) {
+    .metric-grid {
+        gap: 0.75rem;
+    }
+}
+
+/* Large desktop: 1440px+ */
+@media (min-width: 1440px) {
+    .card {
+        padding: 1.5rem;
+    }
+    
+    .bt-section {
+        padding: 1.25rem 1.5rem;
+    }
+}
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="container-fluid">
-    <div class="card p-3">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <h4><i class="fas fa-chart-line"></i> Backtest Chart</h4>
+    <div class="card">
+        <div class="mb-3">
             <div class="controls">
-                <div class="input-group" style="width:auto;">
-                    <input type="text" id="customTicker" class="form-control" placeholder="Ticker" value="TSLA" style="width:120px;">
-                    <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">Watchlist</button>
+                <h4><i class="fas fa-chart-line"></i> Backtest Chart</h4>
+                <div class="input-group" style="max-width:200px;">
+                    <input type="text" id="customTicker" class="form-control" placeholder="Ticker" value="TSLA">
+                    <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-label="Watchlist">
+                        <span class="d-none d-sm-inline">Watchlist</span><i class="fas fa-list d-inline d-sm-none"></i>
+                    </button>
                     <ul class="dropdown-menu" id="watchlistDropdown"></ul>
                 </div>
-                <select id="fromYear" class="form-select w-auto"></select>
-                <select id="toYear"   class="form-select w-auto"></select>
-                <button id="runBacktestBtn" class="btn btn-primary">Run Backtest</button>
-                <span id="backtestStatus" class="text-muted"></span>
-                <div class="btn-group ms-auto" role="group" id="yearNav" style="display:none;">
-                    <button id="prevYearBtn" class="btn btn-sm btn-outline-secondary">◀</button>
-                    <span id="currentYearLabel" class="mx-2" style="min-width:60px;text-align:center;">2020</span>
-                    <button id="nextYearBtn" class="btn btn-sm btn-outline-secondary">▶</button>
+                <select id="fromYear" class="form-select" style="width:auto;max-width:100px;" aria-label="From year"></select>
+                <select id="toYear"   class="form-select" style="width:auto;max-width:100px;" aria-label="To year"></select>
+                <button id="runBacktestBtn" class="btn btn-primary">
+                    <span class="d-none d-sm-inline">Run Backtest</span><span class="d-inline d-sm-none">Run</span>
+                </button>
+                <span id="backtestStatus" class="text-muted" style="font-size:0.8rem;"></span>
+                <div class="btn-group" role="group" id="yearNav" style="display:none;margin-left:auto;">
+                    <button id="prevYearBtn" class="btn btn-sm btn-outline-secondary" aria-label="Previous year">◀</button>
+                    <span id="currentYearLabel" class="mx-2 d-flex align-items-center" style="min-width:60px;text-align:center;font-size:0.85rem;">2020</span>
+                    <button id="nextYearBtn" class="btn btn-sm btn-outline-secondary" aria-label="Next year">▶</button>
                 </div>
             </div>
         </div>

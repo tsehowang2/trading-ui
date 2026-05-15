@@ -15,11 +15,17 @@
     {% block head %}{% endblock %}
 </head>
 <body>
+    <!-- Mobile menu overlay -->
+    <div class="mobile-overlay" id="mobileOverlay"></div>
+    
     <div class="wrapper">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <h4><i class="fas fa-chart-line"></i> v2.9p</h4>
+                <button class="mobile-close" id="closeSidebar" aria-label="Close menu">
+                    <i class="fas fa-times"></i>
+                </button>
             </div>
             <ul class="nav flex-column">
                 <li class="nav-item">
@@ -40,15 +46,20 @@
             <header class="topbar">
                 <div class="container-fluid">
                     <div class="d-flex justify-content-between align-items-center">
-                        <h2>{% block page_title %}Portfolio Dashboard{% endblock %}</h2>
-                        <div>
+                        <div class="d-flex align-items-center gap-2">
+                            <button class="mobile-menu-btn" id="openSidebar" aria-label="Open menu">
+                                <i class="fas fa-bars"></i>
+                            </button>
+                            <h2 class="topbar-title">{% block page_title %}Portfolio Dashboard{% endblock %}</h2>
+                        </div>
+                        <div class="topbar-meta">
                             <span class="text-muted" id="last-updated">Last updated: Just now</span>
                         </div>
                     </div>
                 </div>
             </header>
 
-            <div class="content p-4">
+            <div class="content">
                 {% block content %}{% endblock %}
             </div>
         </div>
@@ -56,6 +67,37 @@
     <div id="chartTooltip" class="chart-tooltip"></div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/static/js/main.js"></script>
-    
+    <script>
+    // Mobile menu toggle
+    (function() {
+        const sidebar = document.getElementById('sidebar');
+        const overlay = document.getElementById('mobileOverlay');
+        const openBtn = document.getElementById('openSidebar');
+        const closeBtn = document.getElementById('closeSidebar');
+        
+        function openMenu() {
+            sidebar.classList.add('open');
+            overlay.classList.add('show');
+            document.body.style.overflow = 'hidden';
+        }
+        
+        function closeMenu() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('show');
+            document.body.style.overflow = '';
+        }
+        
+        openBtn.addEventListener('click', openMenu);
+        closeBtn.addEventListener('click', closeMenu);
+        overlay.addEventListener('click', closeMenu);
+        
+        // Close on nav link click (mobile)
+        sidebar.querySelectorAll('.nav-link').forEach(link => {
+            link.addEventListener('click', () => {
+                if (window.innerWidth < 992) closeMenu();
+            });
+        });
+    })();
+    </script>
     {% block scripts %}{% endblock %}
 </html>

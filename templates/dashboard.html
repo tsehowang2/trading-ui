@@ -5,66 +5,95 @@
 
 {% block head %}
 <style>
-/* ── Layout ───────────────────────────────────────────────────────────── */
-.dash-section { background: #1a1a1f; border-radius: 10px; padding: 20px 24px; margin-bottom: 22px; }
-.dash-section h5 { font-size: .85rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #64748b; margin-bottom: 14px; border-bottom: 1px solid #2a2a35; padding-bottom: 8px; }
+/* ══════════════════════════════════════════════════════════════════════════
+   DASHBOARD - MOBILE-FIRST RESPONSIVE STYLES (matches index.html)
+   ══════════════════════════════════════════════════════════════════════════ */
 
-/* ── Summary cards ────────────────────────────────────────────────────── */
-.stat-card { background: #14141a; border-radius: 8px; padding: 16px 20px; border: 1px solid #2a2a35; }
-.stat-card .label { font-size: .72rem; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
-.stat-card .value { font-size: 1.35rem; font-weight: 700; color: #e0e0e0; font-family: 'JetBrains Mono', monospace; }
-.stat-card .sub   { font-size: .75rem; color: #64748b; margin-top: 2px; }
+.dash-section { background: #1a1a1f; border-radius: 8px; padding: 0.875rem; margin-bottom: 1rem; }
+.dash-section h5 { font-size: 0.8rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #64748b; margin-bottom: 0.75rem; border-bottom: 1px solid #2a2a35; padding-bottom: 0.5rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.dash-section h5 i { font-size: 0.9rem; }
+.stat-card { background: #14141a; border-radius: 8px; padding: 0.875rem 1rem; border: 1px solid #2a2a35; min-height: 90px; display: flex; flex-direction: column; justify-content: space-between; }
+.stat-card .label { font-size: 0.7rem; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.25rem; line-height: 1.2; }
+.stat-card .value { font-size: 1.15rem; font-weight: 700; color: #e0e0e0; font-family: 'JetBrains Mono', monospace; line-height: 1.2; word-break: break-word; }
+.stat-card .sub { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; line-height: 1.3; }
 .stat-card.green  { border-color: #10b981; }
 .stat-card.yellow { border-color: #f59e0b; }
 .stat-card.red    { border-color: #ef4444; }
 
-/* ── Tables ───────────────────────────────────────────────────────────── */
-.dash-table { width: 100%; font-size: .82rem; border-collapse: collapse; }
-.dash-table th { color: #64748b; font-weight: 600; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; padding: 6px 10px 10px; border-bottom: 1px solid #2a2a35; white-space: nowrap; }
-.dash-table td { padding: 8px 10px; border-bottom: 1px solid #1e1e28; white-space: nowrap; font-family: 'JetBrains Mono', monospace; font-size: .8rem; }
+.table-responsive { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.dash-table { width: 100%; font-size: 0.75rem; border-collapse: collapse; min-width: 800px; }
+.dash-table th { color: #64748b; font-weight: 600; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.375rem 0.5rem; border-bottom: 1px solid #2a2a35; white-space: nowrap; position: sticky; top: 0; background: #1a1a1f; z-index: 10; }
+.dash-table td { padding: 0.5rem; border-bottom: 1px solid #1e1e28; white-space: nowrap; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; }
 .dash-table tr:last-child td { border-bottom: none; }
 .dash-table tr:hover td { background: rgba(255,255,255,.03); }
 
-/* ── Color helpers ────────────────────────────────────────────────────── */
 .up   { color: #10b981; }
 .dn   { color: #ef4444; }
 .dim  { color: #64748b; }
 .warn { color: #f59e0b; }
 
-/* ── Action badges ────────────────────────────────────────────────────── */
 .badge-hold  { background: #1e3a5f; color: #60a5fa; border: 1px solid #2563eb; }
 .badge-hold2 { background: #1a3300; color: #00ff9d; border: 1px solid #10b981; }
 .badge-sell  { background: #3f0000; color: #f87171; border: 1px solid #ef4444; }
 .badge-weak  { background: #3b2200; color: #fbbf24; border: 1px solid #f59e0b; }
-.badge-base  { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: .7rem; font-weight: 700; letter-spacing: .04em; font-family: sans-serif; }
+.badge-base  { display: inline-block; padding: 0.125rem 0.5rem; border-radius: 4px; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.03em; font-family: sans-serif; white-space: nowrap; }
 
-/* ── No-signal pills ──────────────────────────────────────────────────── */
-.ns-item { background: #14141a; border: 1px solid #2a2a35; border-radius: 6px; padding: 8px 12px; font-size: .75rem; line-height: 1.5; }
-.ns-item .ns-ticker { color: #e0e0e0; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
-.ns-item .ns-reason { color: #64748b; }
+.ns-item { background: #14141a; border: 1px solid #2a2a35; border-radius: 6px; padding: 0.625rem 0.75rem; font-size: 0.75rem; line-height: 1.4; }
+.ns-item .ns-ticker { color: #e0e0e0; font-weight: 700; font-family: 'JetBrains Mono', monospace; margin-bottom: 0.25rem; }
+.ns-item .ns-reason { color: #64748b; word-break: break-word; }
 
-/* ── Risk bar ─────────────────────────────────────────────────────────── */
 .risk-bar-wrap { height: 6px; background: #2a2a35; border-radius: 3px; margin-top: 4px; }
 .risk-bar      { height: 6px; border-radius: 3px; }
 
-/* ── Alert bar ────────────────────────────────────────────────────────── */
-.info-bar { background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.3); border-radius: 8px; padding: 10px 16px; font-size: .82rem; color: #fbbf24; margin-bottom: 16px; display: none; }
-.info-bar.show { display: flex; gap: 10px; align-items: center; }
+.info-bar { background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.3); border-radius: 8px; padding: 0.75rem 1rem; font-size: 0.8rem; color: #fbbf24; margin-bottom: 1rem; display: none; align-items: flex-start; gap: 0.625rem; }
+.info-bar.show { display: flex; }
+.info-bar i { flex-shrink: 0; margin-top: 0.125rem; }
 
-/* ── Loader ───────────────────────────────────────────────────────────── */
-#loader { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 300px; gap: 16px; }
+#loader { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 250px; gap: 1rem; padding: 2rem 1rem; }
 #loader .spinner-border { width: 2.5rem; height: 2.5rem; color: #00ff9d; }
-#loader p { color: #64748b; font-size: .85rem; }
+#loader p { color: #64748b; font-size: 0.85rem; text-align: center; max-width: 300px; }
 #dashContent { display: none; }
 
-/* ── Rest tickers ─────────────────────────────────────────────────────── */
-.ticker-pill { display: inline-block; background: #14141a; border: 1px solid #2a2a35; border-radius: 4px; padding: 1px 7px; font-size: .72rem; color: #94a3b8; font-family: 'JetBrains Mono', monospace; margin: 2px; }
+.ticker-pill { display: inline-block; background: #14141a; border: 1px solid #2a2a35; border-radius: 4px; padding: 0.125rem 0.5rem; font-size: 0.7rem; color: #94a3b8; font-family: 'JetBrains Mono', monospace; margin: 0.125rem; white-space: nowrap; }
 
-/* ── Allocation bar ───────────────────────────────────────────────────── */
-.alloc-bar { height: 10px; background: #2a2a35; border-radius: 5px; overflow: hidden; margin-bottom: 6px; }
-.alloc-seg-invested { background: #3b82f6; height: 100%; float: left; }
-.alloc-seg-cash     { background: #10b981; height: 100%; float: left; }
-.alloc-seg-reserve  { background: #f59e0b; height: 100%; float: left; }
+.alloc-bar { height: 10px; background: #2a2a35; border-radius: 5px; overflow: hidden; margin-bottom: 0.5rem; display: flex; }
+.alloc-seg-invested { background: #3b82f6; height: 100%; }
+.alloc-seg-cash     { background: #10b981; height: 100%; }
+.alloc-seg-reserve  { background: #f59e0b; height: 100%; }
+
+.top-controls { flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
+.top-controls > div:first-child { flex: 1 1 auto; min-width: 0; font-size: 0.75rem; }
+.cache-badge { display: inline-block; padding: 0.125rem 0.5rem; border-radius: 4px; font-size: 0.65rem; white-space: nowrap; margin-left: 0.5rem; }
+
+/* Responsive breakpoints */
+@media (min-width: 390px) {
+    .dash-section { padding: 1rem 1.25rem; }
+    .stat-card { padding: 1rem 1.25rem; }
+    .stat-card .value { font-size: 1.25rem; }
+    .dash-table { font-size: 0.8rem; }
+    .dash-table th { font-size: 0.7rem; padding: 0.5rem 0.625rem; }
+    .dash-table td { padding: 0.625rem; font-size: 0.8rem; }
+}
+
+@media (min-width: 768px) {
+    .dash-section { padding: 1.25rem 1.5rem; margin-bottom: 1.375rem; }
+    .dash-section h5 { font-size: 0.85rem; margin-bottom: 1rem; padding-bottom: 0.625rem; }
+    .stat-card { min-height: 100px; }
+    .stat-card .label { font-size: 0.72rem; }
+    .stat-card .value { font-size: 1.35rem; }
+    .stat-card .sub { font-size: 0.75rem; }
+    .dash-table th { padding: 0.5rem 0.75rem; }
+    .dash-table td { padding: 0.625rem 0.75rem; }
+    .top-controls > div:first-child { font-size: 0.82rem; }
+}
+
+@media (min-width: 1024px) {
+    .dash-section { padding: 1.25rem 1.5rem; margin-bottom: 1.375rem; }
+}
+
+@media (min-width: 1440px) {
+    .dash-section { padding: 1.5rem 1.75rem; }
+}
 </style>
 {% endblock %}
 
@@ -72,17 +101,15 @@
 <div class="container-fluid">
 
   <!-- Top controls bar -->
-  <div class="d-flex justify-content-between align-items-center mb-3">
-    <div style="font-size:.82rem;">
-      <span id="dashDate" class="text-muted"></span>
-      <span id="cacheLabel" style="display:none;margin-left:8px;padding:2px 8px;background:#1a2a1a;border:1px solid #2d5a27;border-radius:4px;font-size:.7rem;color:#6ee36e;">CACHED</span>
-      <span id="liveLabel"  style="display:none;margin-left:8px;padding:2px 8px;background:#1a1a2a;border:1px solid #2d3d5a;border-radius:4px;font-size:.7rem;color:#6ea8fe;">LIVE</span>
+  <div class="d-flex top-controls">
+    <div style="min-width:0;">
+      <span id="dashDate" class="text-muted d-block"></span>
+      <span id="cacheLabel" style="display:none;" class="cache-badge" style="background:#1a2a1a;border:1px solid #2d5a27;color:#6ee36e;">CACHED</span>
+      <span id="liveLabel"  style="display:none;" class="cache-badge" style="background:#1a1a2a;border:1px solid #2d3d5a;color:#6ea8fe;">LIVE</span>
     </div>
-    <div class="d-flex gap-2">
-      <button id="refreshBtn" class="btn btn-sm btn-outline-success px-3">
-        <i class="fas fa-sync-alt me-1"></i> Refresh Live
-      </button>
-    </div>
+    <button id="refreshBtn" class="btn btn-sm btn-outline-success">
+      <i class="fas fa-sync-alt me-1"></i><span class="d-none d-sm-inline"> Refresh Live</span><span class="d-inline d-sm-none">Refresh</span>
+    </button>
   </div>
 
   <!-- Low-cash alert -->

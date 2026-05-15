@@ -4,46 +4,108 @@
 
 {% block head %}
 <style>
+/* ══════════════════════════════════════════════════════════════════════════
+   CANDLESTICK CHART - MOBILE-FIRST RESPONSIVE STYLES
+   ══════════════════════════════════════════════════════════════════════════ */
+
+#chartContainer {
+    background: #0f0f12;
+    padding: 0.75rem;
+    border-radius: 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+canvas {
+    display: block;
+    margin: 0 auto;
+    background: #1e293b;
+    border-radius: 6px;
+    max-width: 100%;
+    height: auto !important;
+}
+
+.tooltip {
+    position: fixed;
+    background: rgba(0,0,0,0.9);
+    color: white;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    pointer-events: none;
+    z-index: 1000;
+    display: none;
+    font-family: 'JetBrains Mono', monospace;
+    max-width: 90vw;
+    line-height: 1.4;
+}
+
+.controls {
+    margin-bottom: 1rem;
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.controls button {
+    min-height: 40px;
+    font-size: 0.85rem;
+    padding: 0.5rem 0.75rem;
+}
+
+#infoText {
+    font-size: 0.8rem;
+    flex-basis: 100%;
+}
+
+/* Responsive breakpoints */
+@media (min-width: 390px) {
     #chartContainer {
-        background: #0f0f12;
-        padding: 20px;
-        border-radius: 12px;
-        overflow-x: auto;
+        padding: 1rem;
     }
-    canvas {
-        display: block;
-        margin: 0 auto;
-        background: #1e293b;
-        border-radius: 8px;
-    }
+    
     .tooltip {
-        position: fixed;
-        background: rgba(0,0,0,0.9);
-        color: white;
-        padding: 8px 12px;
-        border-radius: 6px;
-        font-size: 12px;
-        pointer-events: none;
-        z-index: 1000;
-        display: none;
-        font-family: monospace;
+        font-size: 0.75rem;
+        padding: 0.625rem 0.875rem;
     }
-    .controls {
-        margin-bottom: 20px;
-        display: flex;
-        gap: 10px;
-        align-items: center;
-        flex-wrap: wrap;
+}
+
+@media (min-width: 768px) {
+    #chartContainer {
+        padding: 1.25rem;
     }
+    
+    .controls button {
+        font-size: 0.9rem;
+    }
+    
+    #infoText {
+        flex-basis: auto;
+        margin-left: auto;
+    }
+}
+
+@media (min-width: 1024px) {
+    #chartContainer {
+        padding: 1.5rem;
+    }
+}
 </style>
 {% endblock %}
 
 {% block content %}
-<h2>{{ ticker }} - Candlestick Chart</h2>
+<h2 style="font-size:1.25rem;margin-bottom:1rem;">{{ ticker }} - Candlestick Chart</h2>
 <div class="controls">
-    <button id="zoomInBtn" class="btn btn-sm btn-primary">🔍 Zoom In</button>
-    <button id="zoomOutBtn" class="btn btn-sm btn-primary">🔍 Zoom Out</button>
-    <button id="resetViewBtn" class="btn btn-sm btn-secondary">Reset View</button>
+    <button id="zoomInBtn" class="btn btn-sm btn-primary">
+        <span class="d-none d-sm-inline">🔍 Zoom In</span><span class="d-inline d-sm-none">+</span>
+    </button>
+    <button id="zoomOutBtn" class="btn btn-sm btn-primary">
+        <span class="d-none d-sm-inline">🔍 Zoom Out</span><span class="d-inline d-sm-none">−</span>
+    </button>
+    <button id="resetViewBtn" class="btn btn-sm btn-secondary">
+        <span class="d-none d-sm-inline">Reset View</span><span class="d-inline d-sm-none">Reset</span>
+    </button>
     <span id="infoText" class="text-muted"></span>
 </div>
 <div id="chartContainer" style="width:100%; overflow-x:auto;">
