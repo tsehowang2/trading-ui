@@ -57,13 +57,16 @@ def _write_holdings_json(rows: list[dict]) -> None:
     # Try PostgreSQL first
     if db.DATABASE_URL:
         if db.write_holdings_db(clean):
-            print(f"[HOLDINGS] Saved {len(clean)} holdings to PostgreSQL")
-            # Also write to JSON as backup
+            print(f"[HOLDINGS] ✓ Saved {len(clean)} holdings to PostgreSQL")
+            # CRITICAL: Also write to JSON file for portfolio analysis
+            # (main.py reads from file, not DB)
             try:
+                os.makedirs(os.path.dirname(HOLDINGS_PATH), exist_ok=True)
                 with open(HOLDINGS_PATH, "w", encoding="utf-8") as f:
                     json.dump(clean, f, indent=2)
-            except Exception:
-                pass  # JSON backup is optional
+                print(f"[HOLDINGS] ✓ Synced to JSON file for portfolio analysis")
+            except Exception as e:
+                print(f"[HOLDINGS] ⚠ JSON sync failed: {e}")
             return
     
     # Fallback to JSON file
@@ -112,7 +115,9 @@ def index():
 @app.route('/api/holdings', methods=['GET', 'POST', 'DELETE'])
 def api_holdings():
     if request.method == 'GET':
-        return jsonify(_read_holdings_json())
+        holdings = _read_holdings_json()
+        print(f"[API] GET /api/holdings → returning {len(holdings)} holdings")
+        return jsonify(holdings)
     elif request.method == 'POST':
         data     = request.json
         ticker   = str(data.get('ticker', '')).strip().upper()
@@ -302,6 +307,19 @@ def api_watchlist():
         return jsonify({"watchlist": [], "error": str(e)})
 
 
+# ── Debug endpoint ──
+@app.route('/api/debug/storage')
+def debug_storage():
+    """Debug endpoint to check storage status."""
+    return jsonify({
+        "database_url_set": bool(db.DATABASE_URL),
+        "holdings_from_db": db.read_holdings_db() if db.DATABASE_URL else None,
+        "holdings_from_json": _read_holdings_json(),
+        "json_file_exists": os.path.exists(HOLDINGS_PATH),
+        "json_file_path": HOLDINGS_PATH
+    })
+
+
 @app.route('/backtest')
 def backtest_page():
     return render_template('backtest.html')
@@ -345,6 +363,20 @@ def api_dashboard():
             holdings_path = holdings_rel
         else:
             holdings_path = os.path.join(_ROOT, holdings_rel)
+
+        # ── CRITICAL: Sync PostgreSQL holdings to JSON file before analysis ──
+        # The portfolio analysis reads from a file, so we must ensure the file
+        # contains the latest holdings from the database (especially on Render
+        # where the filesystem is ephemeral).
+        holdings_from_db = _read_holdings_json()  # Reads from DB (or JSON fallback)
+        try:
+            os.makedirs(os.path.dirname(holdings_path), exist_ok=True)
+            with open(holdings_path, "w", encoding="utf-8") as f:
+                json.dump(holdings_from_db, f, indent=2)
+            print(f"[DASHBOARD] Synced {len(holdings_from_db)} holdings from DB to {holdings_path}")
+        except Exception as sync_err:
+            print(f"[DASHBOARD] Warning: Could not sync holdings to file: {sync_err}")
+            # Continue anyway - maybe file already exists
 
         watchlist   = p.get("watchlist", [])
         capital     = p.get("capital", None) or None

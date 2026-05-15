@@ -61,9 +61,22 @@ def read_holdings_db() -> List[Dict]:
             rows = cur.fetchall()
         conn.close()
         
-        return [dict(row) for row in rows]
+        # Convert Decimal to float for JSON serialization
+        result = []
+        for row in rows:
+            result.append({
+                'ticker': str(row['ticker']),
+                'entry_price': float(row['entry_price']),
+                'shares': float(row['shares']),
+                'notes': str(row['notes'] or '')
+            })
+        
+        print(f"[DB] ✓ Read {len(result)} holdings from PostgreSQL")
+        return result
     except Exception as e:
         print(f"[DB] Read error: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 def write_holdings_db(holdings: List[Dict]) -> bool:
