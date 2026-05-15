@@ -1,0 +1,300 @@
+{% extends "base.html" %}
+
+{% block title %}{{ ticker }} Chart - v2.9p{% endblock %}
+
+{% block head %}
+<style>
+    #chartContainer {
+        background: #0f0f12;
+        padding: 20px;
+        border-radius: 12px;
+        overflow-x: auto;
+    }
+    canvas {
+        display: block;
+        margin: 0 auto;
+        background: #1e293b;
+        border-radius: 8px;
+    }
+    .tooltip {
+        position: fixed;
+        background: rgba(0,0,0,0.9);
+        color: white;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 12px;
+        pointer-events: none;
+        z-index: 1000;
+        display: none;
+        font-family: monospace;
+    }
+    .controls {
+        margin-bottom: 20px;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2>{{ ticker }} - Candlestick Chart</h2>
+<div class="controls">
+    <button id="zoomInBtn" class="btn btn-sm btn-primary">🔍 Zoom In</button>
+    <button id="zoomOutBtn" class="btn btn-sm btn-primary">🔍 Zoom Out</button>
+    <button id="resetViewBtn" class="btn btn-sm btn-secondary">Reset View</button>
+    <span id="infoText" class="text-muted"></span>
+</div>
+<div id="chartContainer" style="width:100%; overflow-x:auto;">
+    <canvas id="candlestickCanvas" width="1000" height="500"></canvas>
+</div>
+<div class="tooltip" id="tooltip"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Configuration
+    let chartData = [];
+    let canvas, ctx;
+    let candleWidth = 6;
+    let candleSpacing = 2;
+    let startIndex = 0;
+    let visibleCandles = 0;
+    let padding = { left: 70, right: 50, top: 30, bottom: 30 };
+    
+    // Colors
+    const colors = {
+        bg: '#1e293b',
+        grid: '#334155',
+        text: '#94a3b8',
+        bull: '#10b981',
+        bear: '#ef4444',
+        wick: '#64748b'
+    };
+    
+    // Initialize
+    document.addEventListener('DOMContentLoaded', function() {
+        canvas = document.getElementById('candlestickCanvas');
+        ctx = canvas.getContext('2d');
+        fetchData();
+        
+        document.getElementById('zoomInBtn').addEventListener('click', () => zoom(0.8));
+        document.getElementById('zoomOutBtn').addEventListener('click', () => zoom(1.2));
+        document.getElementById('resetViewBtn').addEventListener('click', resetView);
+        
+        canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('mouseleave', () => hideTooltip());
+        window.addEventListener('resize', () => scheduleDraw());
+    });
+    
+    async function fetchData() {
+        try {
+            const ticker = '{{ ticker }}';
+            const response = await fetch(`/api/ohlc/${ticker}`);
+            const data = await response.json();
+            if (data.error) throw new Error(data.error);
+            
+            chartData = data.map(d => ({
+                date: d.Date,
+                open: d.Open,
+                high: d.High,
+                low: d.Low,
+                close: d.Close,
+                volume: d.Volume
+            }));
+            
+            if (chartData.length === 0) throw new Error('No data');
+            
+            visibleCandles = Math.floor((canvas.width - padding.left - padding.right) / (candleWidth + candleSpacing));
+            resetView();
+            document.getElementById('infoText').innerHTML = `${chartData.length} days loaded`;
+        } catch (err) {
+            console.error(err);
+            document.getElementById('infoText').innerHTML = `Error: ${err.message}`;
+        }
+    }
+    
+    function resetView() {
+        startIndex = 0;
+        drawChart();
+    }
+    
+    function zoom(factor) {
+        let newWidth = candleWidth * factor;
+        if (newWidth < 3) newWidth = 3;
+        if (newWidth > 20) newWidth = 20;
+        candleWidth = newWidth;
+        visibleCandles = Math.floor((canvas.width - padding.left - padding.right) / (candleWidth + candleSpacing));
+        if (startIndex + visibleCandles > chartData.length) {
+            startIndex = Math.max(0, chartData.length - visibleCandles);
+        }
+        drawChart();
+    }
+    
+    function scheduleDraw() {
+        setTimeout(() => drawChart(), 100);
+    }
+    
+    function drawChart() {
+        if (!chartData.length) return;
+        
+        // Set canvas size (responsive)
+        const container = document.getElementById('chartContainer');
+        canvas.width = Math.max(container.clientWidth, 800);
+        canvas.height = 500;
+        visibleCandles = Math.floor((canvas.width - padding.left - padding.right) / (candleWidth + candleSpacing));
+        
+        const endIndex = Math.min(startIndex + visibleCandles, chartData.length);
+        const visibleData = chartData.slice(startIndex, endIndex);
+        if (visibleData.length === 0) return;
+        
+        // Calculate price range
+        const allPrices = visibleData.flatMap(d => [d.high, d.low]);
+        let minPrice = Math.min(...allPrices);
+        let maxPrice = Math.max(...allPrices);
+        const range = maxPrice - minPrice;
+        minPrice -= range * 0.05;
+        maxPrice += range * 0.05;
+        
+        // Clear background
+        ctx.fillStyle = colors.bg;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw grid
+        drawGrid(minPrice, maxPrice, visibleData.length);
+        
+        // Draw candlesticks
+        for (let i = 0; i < visibleData.length; i++) {
+            drawCandle(visibleData[i], i, minPrice, maxPrice);
+        }
+        
+        // Draw x-axis dates
+        drawXAxis(visibleData);
+    }
+    
+    function drawGrid(minPrice, maxPrice, candleCount) {
+        const chartHeight = canvas.height - padding.top - padding.bottom;
+        const chartWidth = canvas.width - padding.left - padding.right;
+        
+        ctx.strokeStyle = colors.grid;
+        ctx.lineWidth = 0.5;
+        
+        // Horizontal lines (price levels)
+        const steps = 5;
+        for (let i = 0; i <= steps; i++) {
+            const price = minPrice + (maxPrice - minPrice) * i / steps;
+            const y = padding.top + chartHeight - (price - minPrice) / (maxPrice - minPrice) * chartHeight;
+            ctx.beginPath();
+            ctx.moveTo(padding.left, y);
+            ctx.lineTo(padding.left + chartWidth, y);
+            ctx.stroke();
+            
+            ctx.fillStyle = colors.text;
+            ctx.font = '10px monospace';
+            ctx.textAlign = 'right';
+            ctx.fillText(price.toFixed(2), padding.left - 5, y + 3);
+        }
+        
+        // Vertical lines (every few candles)
+        const step = Math.max(1, Math.floor(candleCount / 10));
+        for (let i = 0; i <= candleCount; i += step) {
+            const x = padding.left + i * (candleWidth + candleSpacing);
+            if (x > padding.left && x < padding.left + chartWidth) {
+                ctx.beginPath();
+                ctx.moveTo(x, padding.top);
+                ctx.lineTo(x, padding.top + chartHeight);
+                ctx.stroke();
+            }
+        }
+    }
+    
+    function drawCandle(data, index, minPrice, maxPrice) {
+        const x = padding.left + index * (candleWidth + candleSpacing) + candleWidth / 2;
+        const chartHeight = canvas.height - padding.top - padding.bottom;
+        
+        const priceToY = (price) => padding.top + chartHeight - (price - minPrice) / (maxPrice - minPrice) * chartHeight;
+        
+        const openY = priceToY(data.open);
+        const closeY = priceToY(data.close);
+        const highY = priceToY(data.high);
+        const lowY = priceToY(data.low);
+        const isBull = data.close > data.open;
+        const color = isBull ? colors.bull : colors.bear;
+        
+        // Draw wick
+        ctx.beginPath();
+        ctx.moveTo(x, highY);
+        ctx.lineTo(x, lowY);
+        ctx.strokeStyle = colors.wick;
+        ctx.stroke();
+        
+        // Draw body
+        const bodyTop = Math.min(openY, closeY);
+        const bodyHeight = Math.max(Math.abs(closeY - openY), 1);
+        ctx.fillStyle = color;
+        ctx.fillRect(x - candleWidth / 2, bodyTop, candleWidth, bodyHeight);
+        
+        // Outline
+        ctx.strokeStyle = '#333';
+        ctx.strokeRect(x - candleWidth / 2, bodyTop, candleWidth, bodyHeight);
+    }
+    
+    function drawXAxis(visibleData) {
+        const chartHeight = canvas.height - padding.top - padding.bottom;
+        const step = Math.max(1, Math.floor(visibleData.length / 8));
+        ctx.fillStyle = colors.text;
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'center';
+        
+        for (let i = 0; i < visibleData.length; i += step) {
+            const x = padding.left + i * (candleWidth + candleSpacing) + candleWidth / 2;
+            const date = visibleData[i].date.slice(5); // MM-DD
+            ctx.fillText(date, x, padding.top + chartHeight + 15);
+        }
+    }
+    
+    // Tooltip on hover
+    function handleMouseMove(e) {
+        if (!chartData.length) return;
+        
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+        
+        const totalWidth = visibleCandles * (candleWidth + candleSpacing);
+        for (let i = 0; i < visibleCandles; i++) {
+            const candleStartX = padding.left + i * (candleWidth + candleSpacing);
+            const candleEndX = candleStartX + candleWidth;
+            if (mouseX >= candleStartX && mouseX <= candleEndX) {
+                const dataIndex = startIndex + i;
+                if (dataIndex < chartData.length) {
+                    const d = chartData[dataIndex];
+                    showTooltip(d, e.clientX, e.clientY);
+                    return;
+                }
+            }
+        }
+        hideTooltip();
+    }
+    
+    function showTooltip(data, clientX, clientY) {
+        const tooltip = document.getElementById('tooltip');
+        const change = ((data.close - data.open) / data.open * 100).toFixed(2);
+        const color = change >= 0 ? '#10b981' : '#ef4444';
+        tooltip.innerHTML = `
+            <div><strong>${data.date}</strong></div>
+            <div>O: ${data.open.toFixed(2)} &nbsp; H: ${data.high.toFixed(2)}</div>
+            <div>L: ${data.low.toFixed(2)} &nbsp; C: ${data.close.toFixed(2)}</div>
+            <div>Change: <span style="color:${color}">${change}%</span></div>
+            <div>Volume: ${data.volume.toLocaleString()}</div>
+        `;
+        tooltip.style.left = (clientX + 15) + 'px';
+        tooltip.style.top = (clientY - 30) + 'px';
+        tooltip.style.display = 'block';
+    }
+    
+    function hideTooltip() {
+        document.getElementById('tooltip').style.display = 'none';
+    }
+</script>
+{% endblock %}

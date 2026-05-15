@@ -1,0 +1,413 @@
+{% extends "base.html" %}
+
+{% block title %}Backtest{% endblock %}
+{% block page_title %}Backtest Chart{% endblock %}
+
+{% block head %}
+<style>
+    canvas { cursor: crosshair; background: #1e293b; border-radius: 8px; display: block; margin: 0 auto; }
+    .chart-container { overflow-x: auto; margin-bottom: 20px; }
+    .chart-tooltip {
+        position: fixed;
+        background: rgba(26,26,36,0.3);
+        backdrop-filter: blur(8px);
+        border: 1px solid rgba(42,42,53,0.8);
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-family: 'JetBrains Mono','SF Mono',monospace;
+        font-size: 12px;
+        line-height: 1.5;
+        color: #e0e0e0;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.6);
+        pointer-events: none;
+        z-index: 10000;
+        display: none;
+        white-space: nowrap;
+    }
+    .chart-tooltip strong { color:#00ff9d; font-size:13px; display:block; margin-bottom:6px; border-bottom:1px solid #2a2a35; padding-bottom:4px; }
+    .positive { color: #00ff9d; }
+    .negative { color: #ff4d4d; }
+    .card { background: #1a1a1f; border: none; margin-bottom: 20px; color: #f8f9fa; }
+    .controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+    .controls > * { flex: 0 0 auto; }
+    /* ── New panels ── */
+    .metric-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:8px; }
+    .metric-box { background:#0d0d12; border:1px solid #2a2a35; border-radius:8px; padding:10px 14px; }
+    .metric-box .m-label { font-size:.72rem; color:#64748b; text-transform:uppercase; letter-spacing:.04em; margin-bottom:4px; }
+    .metric-box .m-value { font-size:1.15rem; font-weight:700; font-family:'JetBrains Mono',monospace; }
+    .up  { color:#10b981; } .dn { color:#ef4444; } .neu { color:#94a3b8; }
+    .bt-section { background:#1a1a1f; border:1px solid #2a2a35; border-radius:10px; padding:16px 18px; margin-bottom:16px; }
+    .bt-section h6 { color:#94a3b8; font-size:.75rem; text-transform:uppercase; letter-spacing:.06em; margin-bottom:12px; }
+    .bt-table { width:100%; border-collapse:collapse; font-size:.82rem; }
+    .bt-table th { color:#64748b; font-weight:500; padding:5px 8px; text-align:right; border-bottom:1px solid #2a2a35; white-space:nowrap; }
+    .bt-table th:first-child { text-align:left; }
+    .bt-table td { padding:5px 8px; text-align:right; border-bottom:1px solid #14141a; white-space:nowrap; }
+    .bt-table td:first-child { text-align:left; font-weight:600; }
+    .bt-table tr:last-child td { border-bottom:none; }
+    .bt-table tr.strat-row { background:rgba(59,130,246,.07); }
+    .beat-badge { font-size:.68rem; background:rgba(16,185,129,.15); color:#10b981; border-radius:4px; padding:1px 5px; margin-left:4px; }
+    .action-buy  { color:#00ff9d; } .action-sell { color:#ff4d4d; }
+    #resultsPanel { display:none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="card p-3">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h4><i class="fas fa-chart-line"></i> Backtest Chart</h4>
+            <div class="controls">
+                <div class="input-group" style="width:auto;">
+                    <input type="text" id="customTicker" class="form-control" placeholder="Ticker" value="TSLA" style="width:120px;">
+                    <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">Watchlist</button>
+                    <ul class="dropdown-menu" id="watchlistDropdown"></ul>
+                </div>
+                <select id="fromYear" class="form-select w-auto"></select>
+                <select id="toYear"   class="form-select w-auto"></select>
+                <button id="runBacktestBtn" class="btn btn-primary">Run Backtest</button>
+                <span id="backtestStatus" class="text-muted"></span>
+                <div class="btn-group ms-auto" role="group" id="yearNav" style="display:none;">
+                    <button id="prevYearBtn" class="btn btn-sm btn-outline-secondary">◀</button>
+                    <span id="currentYearLabel" class="mx-2" style="min-width:60px;text-align:center;">2020</span>
+                    <button id="nextYearBtn" class="btn btn-sm btn-outline-secondary">▶</button>
+                </div>
+            </div>
+        </div>
+        <div class="chart-container" id="chartContainer">
+            <canvas id="candlestickCanvas" width="1000" height="450"></canvas>
+        </div>
+        <div id="backtestMetrics" class="row mt-2 text-center" style="display:none;">
+            <div class="col"><small>Total Return</small><br><strong id="metricRet">-</strong></div>
+            <div class="col"><small>Sharpe</small><br><strong id="metricSharpe">-</strong></div>
+            <div class="col"><small>Max DD</small><br><strong id="metricMdd">-</strong></div>
+            <div class="col"><small>Trades</small><br><strong id="metricTrades">-</strong></div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Results panels (shown after run) ── -->
+<div id="resultsPanel">
+
+  <!-- Detailed metrics -->
+  <div class="bt-section">
+    <h6><i class="fas fa-tachometer-alt me-2"></i>Performance Metrics</h6>
+    <div class="metric-grid" id="metricBoxes"></div>
+  </div>
+
+  <!-- Benchmark comparison -->
+  <div class="bt-section">
+    <h6><i class="fas fa-balance-scale me-2"></i>Benchmark Comparison</h6>
+    <div style="overflow-x:auto;">
+      <table class="bt-table">
+        <thead><tr>
+          <th>Strategy / Benchmark</th>
+          <th class="text-end">Total Return</th>
+          <th class="text-end">CAGR</th>
+          <th class="text-end">End Value</th>
+          <th class="text-end">vs Strategy</th>
+        </tr></thead>
+        <tbody id="benchmarkTbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Trade log -->
+  <div class="bt-section">
+    <h6><i class="fas fa-list me-2"></i>Trade Log <span id="tradeCount" class="text-muted" style="font-size:.75rem;"></span></h6>
+    <div style="overflow-x:auto;max-height:360px;overflow-y:auto;">
+      <table class="bt-table">
+        <thead style="position:sticky;top:0;background:#1a1a1f;z-index:1;"><tr>
+          <th>Date</th><th>Action</th><th class="text-end">Price</th><th class="text-end">Shares</th>
+          <th class="text-end">Entry $</th><th class="text-end">P&amp;L %</th>
+          <th class="text-end">Equity After</th>
+          <th class="text-end">Avoided Loss</th><th class="text-end">Missed Gain</th>
+        </tr></thead>
+        <tbody id="tradeLogTbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let chartData=[], trades=[], canvas, ctx;
+    let candleWidth=6, candleSpacing=2, startIndex=0, visibleCandles=0;
+    let padding={left:70,right:50,top:30,bottom:30};
+    let fullChartData=[], fullTrades=[], availableYears=[], currentYearIndex=-1;
+    let lastMinPrice=0, lastMaxPrice=0;
+    const colors={bg:'#1e293b',grid:'#334155',text:'#94a3b8',bull:'#10b981',bear:'#ef4444',wick:'#64748b',buyMarker:'#00ff9d',sellMarker:'#ff4d4d'};
+
+    document.addEventListener('DOMContentLoaded', function() {
+        canvas = document.getElementById('candlestickCanvas');
+        ctx    = canvas.getContext('2d');
+        populateYears();
+        loadWatchlist();
+        document.getElementById('runBacktestBtn').addEventListener('click', () => {
+            const ticker = document.getElementById('customTicker').value.trim().toUpperCase();
+            if (!ticker) { alert('Enter a ticker'); return; }
+            runBacktest(ticker, document.getElementById('fromYear').value||null, document.getElementById('toYear').value||null);
+        });
+        canvas.addEventListener('mousemove', handleCanvasMouseMove);
+        canvas.addEventListener('mouseleave', hideTooltip);
+        window.addEventListener('resize', () => setTimeout(drawChart, 100));
+        document.getElementById('prevYearBtn').addEventListener('click', () => { if (currentYearIndex > 0) { currentYearIndex--; updateYearDisplay(); }});
+        document.getElementById('nextYearBtn').addEventListener('click', () => { if (currentYearIndex < availableYears.length-1) { currentYearIndex++; updateYearDisplay(); }});
+        runBacktest('TSLA', null, null);
+    });
+
+    async function loadWatchlist() {
+        try {
+            const data = await (await fetch('/api/watchlist')).json();
+            const dd = document.getElementById('watchlistDropdown');
+            dd.innerHTML = '';
+            (data.watchlist||[]).forEach(t => {
+                const li=document.createElement('li'), a=document.createElement('a');
+                a.className='dropdown-item'; a.href='#'; a.textContent=t;
+                a.addEventListener('click', e => { e.preventDefault(); document.getElementById('customTicker').value=t; });
+                li.appendChild(a); dd.appendChild(li);
+            });
+        } catch(e) {}
+    }
+
+    function populateYears() {
+        const cur = new Date().getFullYear();
+        const fs=document.getElementById('fromYear'), ts=document.getElementById('toYear');
+        for (let y=2020;y<=cur;y++) { fs.add(new Option(y,y)); ts.add(new Option(y,y)); }
+        fs.value=cur-1; ts.value=cur;
+    }
+
+    async function runBacktest(ticker, fromYear, toYear) {
+        const btn=document.getElementById('runBacktestBtn'), st=document.getElementById('backtestStatus');
+        btn.disabled=true; st.innerText='Running…';
+        try {
+            let url=`/api/backtest/${ticker}`;
+            const p=new URLSearchParams();
+            if (fromYear) p.append('from_year',fromYear);
+            if (toYear)   p.append('to_year',toYear);
+            if (p.toString()) url+='?'+p;
+            const data=await (await fetch(url)).json();
+            if (!data.success) throw new Error(data.error);
+            fullChartData=data.ohlcv||[]; fullTrades=data.trades||[];
+            availableYears=[...new Set(fullChartData.map(d=>d.Date.slice(0,4)))].sort();
+            if (availableYears.length>0) {
+                currentYearIndex=0;
+                document.getElementById('yearNav').style.display='inline-flex';
+                updateYearDisplay();
+            } else {
+                document.getElementById('yearNav').style.display='none';
+                chartData=fullChartData; trades=fullTrades; drawChart();
+            }
+            if (data.metrics) {
+                document.getElementById('backtestMetrics').style.display='flex';
+                const pos=(v,s)=>`<strong style="color:${v>=0?'#10b981':'#ef4444'}">${s}</strong>`;
+                document.getElementById('metricRet').innerHTML    = pos(data.metrics.total_return,(data.metrics.total_return*100).toFixed(1)+'%');
+                document.getElementById('metricSharpe').innerHTML = data.metrics.sharpe.toFixed(2);
+                document.getElementById('metricMdd').innerHTML    = `<span style="color:#ef4444">${(data.metrics.mdd*100).toFixed(1)}%</span>`;
+                document.getElementById('metricTrades').innerHTML = data.metrics.n_trades;
+                renderResults(data);
+            }
+        } catch(e) { alert('Backtest error: '+e.message); }
+        finally { btn.disabled=false; st.innerText=''; }
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+    const fmtPct = (v, sign=true) => v==null ? '—' : (sign&&v>=0?'+':'')+(v*100).toFixed(1)+'%';
+    const fmtD   = v => v==null ? '—' : '$'+v.toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0});
+    const fmtD2  = v => v==null ? '—' : '$'+v.toFixed(2);
+    const cls    = v => v==null?'neu':v>=0?'up':'dn';
+
+    function renderResults(data) {
+        const m = data.metrics;
+        document.getElementById('resultsPanel').style.display = 'block';
+
+        // ── Metric boxes ──────────────────────────────────────────────────────
+        const boxes = [
+            { label:'Total Return', val: fmtPct(m.total_return), c: cls(m.total_return) },
+            { label:'CAGR',         val: fmtPct(m.cagr),         c: cls(m.cagr) },
+            { label:'Sharpe Ratio', val: m.sharpe.toFixed(2),    c: m.sharpe>=1?'up':m.sharpe>=0?'neu':'dn' },
+            { label:'Max Drawdown', val: fmtPct(m.mdd),          c: 'dn' },
+            { label:'Trades/mo',    val: m.tpm.toFixed(2),        c: 'neu' },
+            { label:'# Trades',     val: m.n_trades,              c: 'neu' },
+            { label:'Win Rate',     val: m.win_rate!=null?(m.win_rate*100).toFixed(0)+'%':'—', c: m.win_rate>=0.5?'up':'dn' },
+            { label:'Avg Win',      val: fmtPct(m.avg_win,true),  c: 'up' },
+            { label:'Avg Loss',     val: fmtPct(m.avg_loss,false), c: 'dn' },
+            { label:'Best Trade',   val: fmtPct(m.best_trade),    c: 'up' },
+            { label:'Worst Trade',  val: fmtPct(m.worst_trade),   c: 'dn' },
+            { label:'Start Capital',val: fmtD(m.initial_cap),     c: 'neu' },
+            { label:'End Value',    val: fmtD(m.end_val),         c: cls(m.total_return) },
+        ];
+        document.getElementById('metricBoxes').innerHTML = boxes.map(b =>
+            `<div class="metric-box"><div class="m-label">${b.label}</div><div class="m-value ${b.c}">${b.val}</div></div>`
+        ).join('');
+
+        // ── Benchmark table ───────────────────────────────────────────────────
+        const strat_ret = m.total_return;
+        const strat_end = m.end_val;
+        let rows = `<tr class="strat-row">
+            <td>${data.ticker} Strategy</td>
+            <td class="${cls(strat_ret)}">${fmtPct(strat_ret)}</td>
+            <td class="${cls(m.cagr)}">${fmtPct(m.cagr)}</td>
+            <td>${fmtD(strat_end)}</td>
+            <td>—</td>
+        </tr>`;
+        (data.benchmarks||[]).forEach(b => {
+            const diff = b.ret != null ? strat_ret - b.ret : null;
+            const beat = diff != null && diff > 0 ? `<span class="beat-badge">BEATS</span>` : '';
+            const cagrStr = b.cagr != null ? `<span class="${cls(b.cagr)}">${fmtPct(b.cagr)}</span>` : (b.sigma!=null?`±${(b.sigma*100).toFixed(1)}%`:'—');
+            const retStr  = `<span class="${cls(b.ret)}">${fmtPct(b.ret)}</span>`;
+            const diffStr = diff!=null ? `<span class="${diff>=0?'up':'dn'}">${fmtPct(diff)}</span>${beat}` : '—';
+            rows += `<tr>
+                <td>${b.label}</td>
+                <td>${retStr}</td>
+                <td>${cagrStr}</td>
+                <td>${b.end_val!=null?fmtD(b.end_val):'—'}</td>
+                <td>${diffStr}</td>
+            </tr>`;
+        });
+        document.getElementById('benchmarkTbody').innerHTML = rows;
+
+        // ── Trade log ─────────────────────────────────────────────────────────
+        const tlog = data.trades || [];
+        document.getElementById('tradeCount').textContent = `(${tlog.length} entries)`;
+        document.getElementById('tradeLogTbody').innerHTML = tlog.length === 0
+            ? '<tr><td colspan="9" style="color:#64748b;text-align:center;">No trades</td></tr>'
+            : tlog.map(t => {
+                const isBuy  = t.action.includes('BUY');
+                const isSell = t.action.includes('SELL');
+                const pnlStr = t.pnl_pct != null
+                    ? `<span class="${t.pnl_pct>=0?'up':'dn'}">${fmtPct(t.pnl_pct)}</span>` : '—';
+                const avoidStr = t.avoided_loss != null ? `<span class="up">${fmtPct(t.avoided_loss,false)}</span>` : '—';
+                const missStr  = t.missed_gain  != null ? `<span class="dn">${fmtPct(t.missed_gain,false)}</span>` : '—';
+                return `<tr>
+                    <td>${t.date}</td>
+                    <td class="${isBuy?'action-buy':isSell?'action-sell':'neu'}">${t.action}</td>
+                    <td>${fmtD2(t.price)}</td>
+                    <td>${t.shares}</td>
+                    <td>${t.entry_ep!=null?fmtD2(t.entry_ep):'—'}</td>
+                    <td>${pnlStr}</td>
+                    <td>${t.equity!=null?fmtD(t.equity):'—'}</td>
+                    <td>${avoidStr}</td>
+                    <td>${missStr}</td>
+                </tr>`;
+            }).join('');
+    }
+
+    function updateYearDisplay() {
+        if (availableYears.length) {
+            document.getElementById('currentYearLabel').textContent=availableYears[currentYearIndex];
+            chartData=fullChartData.filter(d=>d.Date.startsWith(availableYears[currentYearIndex]));
+            trades=fullTrades.filter(t=>t.date.startsWith(availableYears[currentYearIndex]));
+            startIndex=0; drawChart();
+        }
+    }
+
+    function drawChart() {
+        hideTooltip();
+        if (!chartData.length) {
+            ctx.clearRect(0,0,canvas.width,canvas.height);
+            ctx.fillStyle=colors.text; ctx.font='16px monospace'; ctx.textAlign='center';
+            ctx.fillText('No data. Run backtest first.',canvas.width/2,canvas.height/2); return;
+        }
+        const cont=document.getElementById('chartContainer');
+        canvas.width=Math.max(cont.clientWidth,800); canvas.height=450;
+        const tw=canvas.width-padding.left-padding.right;
+        candleWidth=Math.max(3,Math.min(12,Math.floor((tw-20)/chartData.length)-candleSpacing));
+        visibleCandles=Math.floor(tw/(candleWidth+candleSpacing));
+        if (startIndex+visibleCandles>chartData.length) startIndex=Math.max(0,chartData.length-visibleCandles);
+        const vis=chartData.slice(startIndex,startIndex+visibleCandles);
+        if (!vis.length) return;
+        let minP=Math.min(...vis.map(d=>d.Low)), maxP=Math.max(...vis.map(d=>d.High));
+        const pad=(maxP-minP)*0.05; minP-=pad; maxP+=pad;
+        lastMinPrice=minP; lastMaxPrice=maxP;
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        ctx.fillStyle=colors.bg; ctx.fillRect(0,0,canvas.width,canvas.height);
+        drawGrid(minP,maxP,vis.length); drawCandles(vis,minP,maxP); drawTrades(vis,minP,maxP); drawXAxis(vis);
+    }
+
+    function drawGrid(mn,mx,cnt) {
+        const ch=canvas.height-padding.top-padding.bottom, cw=canvas.width-padding.left-padding.right;
+        ctx.strokeStyle=colors.grid; ctx.lineWidth=0.5;
+        for (let i=0;i<=5;i++) {
+            const p=mn+(mx-mn)*i/5, y=padding.top+ch-(p-mn)/(mx-mn)*ch;
+            ctx.beginPath(); ctx.moveTo(padding.left,y); ctx.lineTo(padding.left+cw,y); ctx.stroke();
+            ctx.fillStyle=colors.text; ctx.font='10px monospace'; ctx.textAlign='right';
+            ctx.fillText(p.toFixed(2),padding.left-5,y+3);
+        }
+        const step=Math.max(1,Math.floor(cnt/8));
+        for (let i=0;i<=cnt;i+=step) {
+            const x=padding.left+i*(candleWidth+candleSpacing);
+            if (x>padding.left&&x<padding.left+cw) { ctx.beginPath(); ctx.moveTo(x,padding.top); ctx.lineTo(x,padding.top+ch); ctx.stroke(); }
+        }
+    }
+
+    function drawCandles(vis,mn,mx) {
+        const ch=canvas.height-padding.top-padding.bottom;
+        const py=p=>padding.top+ch-(p-mn)/(mx-mn)*ch;
+        vis.forEach((d,i)=>{
+            const x=padding.left+i*(candleWidth+candleSpacing)+candleWidth/2;
+            ctx.strokeStyle=colors.wick; ctx.beginPath(); ctx.moveTo(x,py(d.High)); ctx.lineTo(x,py(d.Low)); ctx.stroke();
+            const bt=Math.min(py(d.Open),py(d.Close)), bh=Math.max(Math.abs(py(d.Close)-py(d.Open)),1);
+            ctx.fillStyle=d.Close>d.Open?colors.bull:colors.bear;
+            ctx.fillRect(x-candleWidth/2,bt,candleWidth,bh);
+        });
+    }
+
+    function drawTrades(vis,mn,mx) {
+        if (!trades.length) return;
+        const ch=canvas.height-padding.top-padding.bottom;
+        const py=p=>padding.top+ch-(p-mn)/(mx-mn)*ch;
+        const s0=vis[0]?.Date, se=vis[vis.length-1]?.Date;
+        trades.forEach(t=>{
+            const td=t.date.split(' ')[0];
+            if (td<s0||td>se) return;
+            const idx=vis.findIndex(d=>d.Date===td); if (idx===-1) return;
+            const x=padding.left+idx*(candleWidth+candleSpacing)+candleWidth/2, y=py(t.price);
+            ctx.beginPath(); ctx.fillStyle=t.action.includes('BUY')?colors.buyMarker:colors.sellMarker;
+            ctx.arc(x,y,5,0,2*Math.PI); ctx.fill();
+            ctx.fillStyle='white'; ctx.font='bold 10px monospace';
+            ctx.fillText(t.action.includes('BUY')?'B':'S',x-3,y+3);
+        });
+    }
+
+    function drawXAxis(vis) {
+        const ch=canvas.height-padding.top-padding.bottom, step=Math.max(1,Math.floor(vis.length/8));
+        ctx.fillStyle=colors.text; ctx.font='10px monospace'; ctx.textAlign='center';
+        for (let i=0;i<vis.length;i+=step) {
+            const x=padding.left+i*(candleWidth+candleSpacing)+candleWidth/2;
+            ctx.fillText(vis[i].Date.slice(5),x,padding.top+ch+15);
+        }
+    }
+
+    function handleCanvasMouseMove(e) {
+        if (!chartData.length) return;
+        const rect=canvas.getBoundingClientRect(), sx=canvas.width/rect.width;
+        const mx=(e.clientX-rect.left)*sx;
+        for (let i=0;i<visibleCandles;i++) {
+            const cx=padding.left+i*(candleWidth+candleSpacing);
+            if (mx>=cx&&mx<=cx+candleWidth) {
+                const di=startIndex+i;
+                if (di<chartData.length) { showTooltip(chartData[di],e.clientX,e.clientY); return; }
+            }
+        }
+        hideTooltip();
+    }
+
+    function showTooltip(d,cx,cy) {
+        const tt=document.getElementById('chartTooltip');
+        const ch=((d.Close-d.Open)/d.Open*100).toFixed(2), cls=ch>=0?'positive':'negative', sym=ch>=0?'▲':'▼';
+        tt.innerHTML=`<strong>${d.Date}</strong><div>O: ${d.Open.toFixed(2)} &nbsp; H: ${d.High.toFixed(2)}</div><div>L: ${d.Low.toFixed(2)} &nbsp; C: ${d.Close.toFixed(2)}</div><div>Change: <span class="${cls}">${sym} ${ch}%</span></div><div>Vol: ${(d.Volume/1e6).toFixed(2)}M</div>`;
+        let l=cx+15, t=cy-40;
+        if (l+200>window.innerWidth) l=cx-210;
+        if (t+120>window.innerHeight) t=cy-120;
+        tt.style.left=l+'px'; tt.style.top=t+'px'; tt.style.display='block';
+    }
+
+    function hideTooltip() {
+        const tt=document.getElementById('chartTooltip');
+        if (tt) tt.style.display='none';
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,19 @@
+[
+  {
+    "ticker": "SOXL",
+    "entry_price": 167.0,
+    "shares": 6,
+    "notes": "leveraged ETF"
+  },
+  { "ticker": "QQQ", "entry_price": 686.0, "shares": 4, "notes": "" },
+  { "ticker": "VOO", "entry_price": 655.0, "shares": 2, "notes": "" },
+  { "ticker": "MCD", "entry_price": 277.0, "shares": 3, "notes": "" },
+  { "ticker": "MSFT", "entry_price": 393.0, "shares": 2, "notes": "" },
+  { "ticker": "IREN", "entry_price": 55.0, "shares": 12, "notes": "" },
+  { "ticker": "URNJ", "entry_price": 31.43, "shares": 20, "notes": "" },
+  { "ticker": "COPX", "entry_price": 82.0, "shares": 3, "notes": "" },
+  { "ticker": "DELL", "entry_price": 256.0, "shares": 1, "notes": "" },
+  { "ticker": "AMDL", "entry_price": 54.0, "shares": 14, "notes": "" },
+  { "ticker": "NVTS", "entry_price": 18.05, "shares": 5, "notes": "" },
+  { "ticker": "MRVL", "entry_price": 179.0, "shares": 6, "notes": "" }
+]

@@ -1,0 +1,448 @@
+{% extends "base.html" %}
+
+{% block title %}Portfolio Dashboard{% endblock %}
+{% block page_title %}Portfolio Dashboard{% endblock %}
+
+{% block head %}
+<style>
+/* ── Layout ───────────────────────────────────────────────────────────── */
+.dash-section { background: #1a1a1f; border-radius: 10px; padding: 20px 24px; margin-bottom: 22px; }
+.dash-section h5 { font-size: .85rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #64748b; margin-bottom: 14px; border-bottom: 1px solid #2a2a35; padding-bottom: 8px; }
+
+/* ── Summary cards ────────────────────────────────────────────────────── */
+.stat-card { background: #14141a; border-radius: 8px; padding: 16px 20px; border: 1px solid #2a2a35; }
+.stat-card .label { font-size: .72rem; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
+.stat-card .value { font-size: 1.35rem; font-weight: 700; color: #e0e0e0; font-family: 'JetBrains Mono', monospace; }
+.stat-card .sub   { font-size: .75rem; color: #64748b; margin-top: 2px; }
+.stat-card.green  { border-color: #10b981; }
+.stat-card.yellow { border-color: #f59e0b; }
+.stat-card.red    { border-color: #ef4444; }
+
+/* ── Tables ───────────────────────────────────────────────────────────── */
+.dash-table { width: 100%; font-size: .82rem; border-collapse: collapse; }
+.dash-table th { color: #64748b; font-weight: 600; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; padding: 6px 10px 10px; border-bottom: 1px solid #2a2a35; white-space: nowrap; }
+.dash-table td { padding: 8px 10px; border-bottom: 1px solid #1e1e28; white-space: nowrap; font-family: 'JetBrains Mono', monospace; font-size: .8rem; }
+.dash-table tr:last-child td { border-bottom: none; }
+.dash-table tr:hover td { background: rgba(255,255,255,.03); }
+
+/* ── Color helpers ────────────────────────────────────────────────────── */
+.up   { color: #10b981; }
+.dn   { color: #ef4444; }
+.dim  { color: #64748b; }
+.warn { color: #f59e0b; }
+
+/* ── Action badges ────────────────────────────────────────────────────── */
+.badge-hold  { background: #1e3a5f; color: #60a5fa; border: 1px solid #2563eb; }
+.badge-hold2 { background: #1a3300; color: #00ff9d; border: 1px solid #10b981; }
+.badge-sell  { background: #3f0000; color: #f87171; border: 1px solid #ef4444; }
+.badge-weak  { background: #3b2200; color: #fbbf24; border: 1px solid #f59e0b; }
+.badge-base  { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: .7rem; font-weight: 700; letter-spacing: .04em; font-family: sans-serif; }
+
+/* ── No-signal pills ──────────────────────────────────────────────────── */
+.ns-item { background: #14141a; border: 1px solid #2a2a35; border-radius: 6px; padding: 8px 12px; font-size: .75rem; line-height: 1.5; }
+.ns-item .ns-ticker { color: #e0e0e0; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+.ns-item .ns-reason { color: #64748b; }
+
+/* ── Risk bar ─────────────────────────────────────────────────────────── */
+.risk-bar-wrap { height: 6px; background: #2a2a35; border-radius: 3px; margin-top: 4px; }
+.risk-bar      { height: 6px; border-radius: 3px; }
+
+/* ── Alert bar ────────────────────────────────────────────────────────── */
+.info-bar { background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.3); border-radius: 8px; padding: 10px 16px; font-size: .82rem; color: #fbbf24; margin-bottom: 16px; display: none; }
+.info-bar.show { display: flex; gap: 10px; align-items: center; }
+
+/* ── Loader ───────────────────────────────────────────────────────────── */
+#loader { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 300px; gap: 16px; }
+#loader .spinner-border { width: 2.5rem; height: 2.5rem; color: #00ff9d; }
+#loader p { color: #64748b; font-size: .85rem; }
+#dashContent { display: none; }
+
+/* ── Rest tickers ─────────────────────────────────────────────────────── */
+.ticker-pill { display: inline-block; background: #14141a; border: 1px solid #2a2a35; border-radius: 4px; padding: 1px 7px; font-size: .72rem; color: #94a3b8; font-family: 'JetBrains Mono', monospace; margin: 2px; }
+
+/* ── Allocation bar ───────────────────────────────────────────────────── */
+.alloc-bar { height: 10px; background: #2a2a35; border-radius: 5px; overflow: hidden; margin-bottom: 6px; }
+.alloc-seg-invested { background: #3b82f6; height: 100%; float: left; }
+.alloc-seg-cash     { background: #10b981; height: 100%; float: left; }
+.alloc-seg-reserve  { background: #f59e0b; height: 100%; float: left; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+
+  <!-- Top controls bar -->
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div style="font-size:.82rem;">
+      <span id="dashDate" class="text-muted"></span>
+      <span id="cacheLabel" style="display:none;margin-left:8px;padding:2px 8px;background:#1a2a1a;border:1px solid #2d5a27;border-radius:4px;font-size:.7rem;color:#6ee36e;">CACHED</span>
+      <span id="liveLabel"  style="display:none;margin-left:8px;padding:2px 8px;background:#1a1a2a;border:1px solid #2d3d5a;border-radius:4px;font-size:.7rem;color:#6ea8fe;">LIVE</span>
+    </div>
+    <div class="d-flex gap-2">
+      <button id="refreshBtn" class="btn btn-sm btn-outline-success px-3">
+        <i class="fas fa-sync-alt me-1"></i> Refresh Live
+      </button>
+    </div>
+  </div>
+
+  <!-- Low-cash alert -->
+  <div id="lowCashAlert" class="info-bar">
+    <i class="fas fa-exclamation-triangle"></i>
+    <span>Cash below reserve — new entries are paused until cash is replenished.</span>
+  </div>
+
+  <!-- Loader (content set dynamically) -->
+  <div id="loader"></div>
+
+  <div id="dashContent">
+
+    <!-- ── Summary cards ─────────────────────────────────────────────── -->
+    <div class="row g-3 mb-3" id="summaryCards"></div>
+
+    <!-- ── Held positions ────────────────────────────────────────────── -->
+    <div class="dash-section">
+      <h5><i class="fas fa-briefcase me-2"></i>Held Positions <span id="heldCount" class="dim"></span></h5>
+      <div class="table-responsive">
+        <table class="dash-table" id="heldTable">
+          <thead>
+            <tr>
+              <th>Ticker</th>
+              <th class="text-end">Entry</th>
+              <th class="text-end">Now</th>
+              <th class="text-end">P&L</th>
+              <th class="text-end">P&L $</th>
+              <th class="text-end">Peak</th>
+              <th class="text-end">Stop</th>
+              <th class="text-end">Cushion</th>
+              <th class="text-end">Score</th>
+              <th class="text-end">ADX</th>
+              <th class="text-end">RS/SPY</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Pyramid + Signals row ─────────────────────────────────────── -->
+    <div class="row g-3">
+
+      <!-- Pyramid -->
+      <div class="col-lg-5">
+        <div class="dash-section h-100">
+          <h5><i class="fas fa-layer-group me-2"></i>Pyramid Opportunities <span id="pyrCount" class="dim"></span></h5>
+          <div id="pyrContent"></div>
+        </div>
+      </div>
+
+      <!-- New Buy Signals -->
+      <div class="col-lg-7">
+        <div class="dash-section h-100">
+          <h5><i class="fas fa-signal me-2"></i>New Buy Signals <span id="sigCount" class="dim"></span></h5>
+          <div id="sigContent"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── No Signal ─────────────────────────────────────────────────── -->
+    <div class="dash-section mt-3">
+      <h5>
+        <i class="fas fa-ban me-2"></i>No Signal
+        <button class="btn btn-link btn-sm p-0 ms-2 text-muted" onclick="toggleNoSignal()" id="nsToggleBtn" style="font-size:.75rem;">show</button>
+        <span id="nsCount" class="dim"></span>
+      </h5>
+      <div id="nsContent" style="display:none;"></div>
+    </div>
+
+    <!-- ── Risk monitor ───────────────────────────────────────────────── -->
+    <div class="dash-section">
+      <h5><i class="fas fa-shield-alt me-2"></i>Position Risk Monitor <span id="riskTarget" class="dim"></span></h5>
+      <div class="table-responsive">
+        <table class="dash-table" id="riskTable">
+          <thead>
+            <tr>
+              <th>Ticker</th>
+              <th class="text-end">Shares</th>
+              <th class="text-end">Price</th>
+              <th class="text-end">Stop</th>
+              <th class="text-end">Risk $</th>
+              <th class="text-end">Risk %</th>
+              <th class="text-end">vs Target</th>
+              <th>Suggestion</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="riskTotal" class="mt-2 text-end" style="font-size:.8rem;"></div>
+    </div>
+
+    <!-- ── Allocation summary ─────────────────────────────────────────── -->
+    <div class="dash-section">
+      <h5><i class="fas fa-chart-pie me-2"></i>Allocation Summary</h5>
+      <div id="allocContent"></div>
+    </div>
+
+  </div><!-- /dashContent -->
+</div>
+
+<script>
+// ── Helpers ────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const fmt  = (n, d=2) => n == null ? '—' : n.toLocaleString('en-US', {minimumFractionDigits:d, maximumFractionDigits:d});
+const fmtP = (n, sign=true) => n == null ? '—' : (sign&&n>=0?'+':'') + (n*100).toFixed(1) + '%';
+const fmtD = n => n == null ? '—' : '$' + fmt(n);
+
+function badge(flag) {
+  if (flag === 'HOLD+') return `<span class="badge-base badge-hold2">PYRAMID OK</span>`;
+  if (flag === 'SELL')  return `<span class="badge-base badge-sell">SELL</span>`;
+  if (flag === 'HOLD~') return `<span class="badge-base badge-weak">HOLD ⚠</span>`;
+  return `<span class="badge-base badge-hold">HOLD</span>`;
+}
+
+function pnlClass(v) { return v == null ? '' : v >= 0 ? 'up' : 'dn'; }
+
+function toggleNoSignal() {
+  const el = $('nsContent');
+  const btn = $('nsToggleBtn');
+  const shown = el.style.display === 'none';
+  el.style.display = shown ? 'grid' : 'none';
+  if (shown) { el.style.gridTemplateColumns = 'repeat(auto-fill, minmax(320px,1fr))'; el.style.gap = '8px'; }
+  btn.textContent = shown ? 'hide' : 'show';
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function render(d, cached) {
+  const cacheTime = d._cache_time || d.date;
+  $('dashDate').textContent = `Portfolio as of ${d.date}  ·  updated ${cacheTime}`;
+  if (cached) {
+    $('cacheLabel').style.display = 'inline';
+    $('liveLabel').style.display  = 'none';
+  } else {
+    $('liveLabel').style.display  = 'inline';
+    $('cacheLabel').style.display = 'none';
+  }
+  if (d.low_cash) $('lowCashAlert').classList.add('show');
+
+  // ── Summary cards ──────────────────────────────────────────────────────
+  const cards = [
+    { label:'Portfolio Value',  value: '$'+fmt(d.portfolio_value), sub: `${d.n_held_slots} of ${d.max_positions} slots used`, cls:'green' },
+    { label:'Holdings',         value: '$'+fmt(d.holdings_value),  sub: fmtP(d.invested_pct, false)+' of portfolio' },
+    { label:'Cash Available',   value: '$'+fmt(d.cash),            sub: `Reserve: $${fmt(d.cash_reserve)} (${(d.reserve_pct*100).toFixed(0)}%)`, cls: d.low_cash?'red':'green' },
+    { label:'Risk / Trade',     value: '$'+fmt(d.risk_dollars,0),  sub: `${d.risk_pct.toFixed(1)}% of portfolio`, cls:'yellow' },
+    { label:'Slots Free',       value: d.slots_remaining,          sub: `${d.n_held_slots} positions active` },
+    { label:'Portfolio Risk',   value: d.total_risk_pct.toFixed(1)+'%', sub: `target ≤ ${(d.risk_pct*d.max_positions).toFixed(0)}%`, cls: d.risk_ok?'':'red' },
+  ];
+  $('summaryCards').innerHTML = cards.map(c=>
+    `<div class="col-6 col-md-4 col-xl-2">
+       <div class="stat-card ${c.cls||''}">
+         <div class="label">${c.label}</div>
+         <div class="value">${c.value}</div>
+         <div class="sub">${c.sub}</div>
+       </div>
+     </div>`
+  ).join('');
+
+  // ── Held positions ──────────────────────────────────────────────────────
+  $('heldCount').textContent = `(${d.held.length})`;
+  const heldTbody = document.querySelector('#heldTable tbody');
+  heldTbody.innerHTML = d.held.map(h => {
+    if (h.error) return `<tr><td colspan="12" class="dim">${h.ticker} — data error</td></tr>`;
+    const warnHtml = h.warn_conf
+      ? `<span class="warn" style="font-size:.7rem;margin-left:6px;">⚠ conf ${(h.score*100).toFixed(0)}%</span>`
+      : '';
+    return `<tr>
+      <td><strong>${h.ticker}</strong></td>
+      <td class="text-end dim">${fmtD(h.entry_price)}</td>
+      <td class="text-end">${fmtD(h.current_price)}</td>
+      <td class="text-end ${pnlClass(h.pnl_pct)}">${fmtP(h.pnl_pct)}</td>
+      <td class="text-end ${pnlClass(h.pnl_dollars)}">${fmtD(h.pnl_dollars)}</td>
+      <td class="text-end dim">${fmtD(h.pos_peak)}</td>
+      <td class="text-end dim">${fmtD(h.stop_price)}</td>
+      <td class="text-end">${h.cushion != null ? (h.cushion*100).toFixed(1)+'%' : '—'}</td>
+      <td class="text-end">${h.score != null ? (h.score*100).toFixed(0)+'%' : '—'}</td>
+      <td class="text-end">${h.adx14 ?? '—'}</td>
+      <td class="text-end ${h.rs_vs_spy >= 0 ? 'up':'dn'}">${fmtP(h.rs_vs_spy)}</td>
+      <td>${badge(h.action_flag)}${warnHtml}</td>
+    </tr>`;
+  }).join('');
+
+  // ── Pyramid ─────────────────────────────────────────────────────────────
+  $('pyrCount').textContent = `(${d.pyramids.length} eligible)`;
+  if (d.pyramids.length === 0) {
+    $('pyrContent').innerHTML = '<p class="dim" style="font-size:.82rem;">No positions meet pyramid criteria.</p>';
+  } else {
+    $('pyrContent').innerHTML = `
+      <table class="dash-table">
+        <thead><tr>
+          <th>#</th><th>Ticker</th><th class="text-end">P&L</th>
+          <th class="text-end">Score</th><th class="text-end">ADX</th>
+          <th class="text-end">RS/SPY</th><th>Action</th>
+        </tr></thead>
+        <tbody>${d.pyramids.map((p,i) => `
+          <tr>
+            <td class="dim">${i+1}</td>
+            <td><strong>${p.ticker}</strong></td>
+            <td class="text-end ${pnlClass(p.pnl_pct)}">${fmtP(p.pnl_pct)}</td>
+            <td class="text-end">${(p.score*100).toFixed(0)}%</td>
+            <td class="text-end">${p.adx14}</td>
+            <td class="text-end ${p.rs_vs_spy>=0?'up':'dn'}">${fmtP(p.rs_vs_spy)}</td>
+            <td>${p.feasible
+              ? `<span class="up">ADD ${p.add_sh} sh</span> <span class="dim" style="font-size:.72rem;">stop ${fmtD(p.stop_px)} TP ${fmtD(p.tp_px)}</span>`
+              : `<span class="dim" style="font-size:.75rem;">insufficient cash</span>`}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  // ── New signals ─────────────────────────────────────────────────────────
+  $('sigCount').textContent = `(${d.n_all_signals} found, showing top ${d.top_signals})`;
+  if (d.signals.length === 0) {
+    $('sigContent').innerHTML = '<p class="dim" style="font-size:.82rem;">No signals above confidence threshold.</p>';
+  } else {
+    const rows = d.signals.map((s,i) => `
+      <tr>
+        <td class="dim">${i+1}</td>
+        <td><strong>${s.ticker}</strong></td>
+        <td class="text-end">${fmtD(s.price)}</td>
+        <td class="text-end dim" style="font-size:.72rem;">${s.gate}</td>
+        <td class="text-end">${(s.score*100).toFixed(0)}%</td>
+        <td class="text-end">${s.adx14}</td>
+        <td class="text-end ${s.rs_vs_spy>=0?'up':'dn'}">${fmtP(s.rs_vs_spy)}</td>
+        <td class="text-end">${s.shares ?? '—'}</td>
+        <td class="text-end dim">${fmtD(s.stop)}</td>
+        <td class="text-end up">${fmtD(s.tp)}</td>
+      </tr>`).join('');
+    $('sigContent').innerHTML = `
+      <table class="dash-table">
+        <thead><tr>
+          <th>#</th><th>Ticker</th><th class="text-end">Price</th>
+          <th class="text-end">Gate</th><th class="text-end">Score</th>
+          <th class="text-end">ADX</th><th class="text-end">RS/SPY</th>
+          <th class="text-end">Shares</th><th class="text-end">Stop</th>
+          <th class="text-end">TP</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+    if (d.rest_tickers.length > 0) {
+      $('sigContent').innerHTML += `
+        <div class="mt-3" style="font-size:.76rem;color:#64748b;">
+          ${d.rest_tickers.length} more signals:
+          ${d.rest_tickers.map(t=>`<span class="ticker-pill">${t}</span>`).join(' ')}
+        </div>`;
+    }
+  }
+
+  // ── No signal ───────────────────────────────────────────────────────────
+  $('nsCount').textContent = `(${d.no_signals.length})`;
+  $('nsContent').innerHTML = d.no_signals.map(ns => `
+    <div class="ns-item">
+      <span class="ns-ticker">${ns.ticker}</span>
+      <div class="ns-reason">${ns.reason}</div>
+    </div>`).join('');
+
+  // ── Risk monitor ────────────────────────────────────────────────────────
+  $('riskTarget').textContent = `(target: ${d.risk_pct.toFixed(1)}% per position = $${fmt(d.risk_dollars,0)})`;
+  const riskTbody = document.querySelector('#riskTable tbody');
+  riskTbody.innerHTML = d.risk_monitor.map(r => {
+    const pct = r.risk_pct.toFixed(1);
+    const barPct = Math.min(r.risk_pct / (d.risk_pct * 2) * 100, 100).toFixed(1);
+    const barColor = r.risk_pct > d.risk_pct * 1.5 ? '#ef4444' : r.risk_pct < d.risk_pct * 0.5 ? '#f59e0b' : '#10b981';
+    const delta = r.delta >= 0
+      ? `<span class="dn">+${r.delta.toFixed(1)}%</span>`
+      : `<span class="dim">${r.delta.toFixed(1)}%</span>`;
+    const sugg = r.suggestion === 'OK'
+      ? `<span class="dim">OK</span>`
+      : r.suggestion.startsWith('REDUCE')
+        ? `<span class="dn">${r.suggestion}</span>`
+        : `<span class="warn">${r.suggestion}</span>`;
+    return `<tr>
+      <td><strong>${r.ticker}</strong></td>
+      <td class="text-end">${r.shares}</td>
+      <td class="text-end">${fmtD(r.price)}</td>
+      <td class="text-end dim">${fmtD(r.stop)}</td>
+      <td class="text-end">${fmtD(r.risk_dollars)}</td>
+      <td class="text-end">
+        <div>${pct}%</div>
+        <div class="risk-bar-wrap"><div class="risk-bar" style="width:${barPct}%;background:${barColor};"></div></div>
+      </td>
+      <td class="text-end">${delta}</td>
+      <td>${sugg}</td>
+    </tr>`;
+  }).join('');
+
+  const riskColor = d.risk_ok ? 'up' : 'dn';
+  const target = (d.risk_pct * d.max_positions).toFixed(0);
+  $('riskTotal').innerHTML = `Total portfolio risk: <strong class="${riskColor}">${d.total_risk_pct.toFixed(1)}%</strong> <span class="dim">(target ≤ ${target}%)</span>`;
+
+  // ── Allocation ──────────────────────────────────────────────────────────
+  const ivPct = (d.invested / d.portfolio_value * 100).toFixed(1);
+  const cashPct = (d.cash / d.portfolio_value * 100).toFixed(1);
+  $('allocContent').innerHTML = `
+    <div class="alloc-bar">
+      <div class="alloc-seg-invested" style="width:${ivPct}%"></div>
+      <div class="alloc-seg-cash"     style="width:${cashPct}%"></div>
+    </div>
+    <div class="d-flex flex-wrap gap-4 mt-2" style="font-size:.8rem;">
+      <div><span style="display:inline-block;width:10px;height:10px;background:#3b82f6;border-radius:2px;margin-right:5px;"></span>Holdings ${d.n_held_slots} positions — $${fmt(d.invested)} (${ivPct}%)</div>
+      <div><span style="display:inline-block;width:10px;height:10px;background:#10b981;border-radius:2px;margin-right:5px;"></span>Cash — $${fmt(d.cash)} (${cashPct}%)</div>
+      <div class="dim"><span style="display:inline-block;width:10px;height:10px;background:#f59e0b;border-radius:2px;margin-right:5px;"></span>Reserve — $${fmt(d.cash_reserve)}</div>
+      <div class="dim ms-auto">Pyramid signals: ${d.n_all_pyramids} &nbsp;&nbsp; New buy signals: ${d.n_all_signals} (showing top ${d.top_signals})</div>
+    </div>`;
+
+  // Show content
+  $('loader').style.display      = 'none';
+  $('dashContent').style.display = 'block';
+}
+
+// ── Load data ──────────────────────────────────────────────────────────────
+async function loadCached() {
+  $('loader').innerHTML = `<div class="spinner-border"></div><p>Loading cached data…</p>`;
+  $('loader').style.display      = 'flex';
+  $('dashContent').style.display = 'none';
+  $('lowCashAlert').classList.remove('show');
+  try {
+    const res  = await fetch('/api/dashboard/cached');
+    const json = await res.json();
+    if (json.success) {
+      render(json.data, true);
+    } else {
+      // No cache yet — show the prompt to refresh
+      $('loader').innerHTML = `
+        <i class="fas fa-database" style="font-size:2rem;color:#64748b;"></i>
+        <p style="color:#64748b;">No cached data yet.</p>
+        <button class="btn btn-sm btn-outline-success px-3" onclick="loadLive()">
+          <i class="fas fa-sync-alt me-1"></i> Run Analysis Now
+        </button>`;
+    }
+  } catch (e) {
+    $('loader').innerHTML = `<div class="dn"><i class="fas fa-exclamation-triangle me-2"></i>Error: ${e.message}</div>`;
+  }
+}
+
+async function loadLive() {
+  $('loader').innerHTML = `<div class="spinner-border"></div><p>Running live analysis… this may take 20–60 seconds</p>`;
+  $('loader').style.display      = 'flex';
+  $('dashContent').style.display = 'none';
+  $('refreshBtn').disabled = true;
+  $('refreshBtn').innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Running…';
+  try {
+    const res  = await fetch('/api/dashboard/refresh');
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error);
+    render(json.data, false);
+  } catch (e) {
+    $('loader').innerHTML = `<div class="dn"><i class="fas fa-exclamation-triangle me-2"></i>Error: ${e.message}</div>`;
+  } finally {
+    $('refreshBtn').disabled = false;
+    $('refreshBtn').innerHTML = '<i class="fas fa-sync-alt me-1"></i> Refresh Live';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  $('refreshBtn').addEventListener('click', loadLive);
+  loadCached();
+});
+</script>
+{% endblock %}

@@ -1,0 +1,166 @@
+# v2_9p configuration file
+# ─────────────────────────────────────────────────────────────────────────────
+# All settings here are DEFAULTS.  Any CLI argument you pass will override the
+# corresponding value in this file.
+#
+# Run modes (only one is active at a time):
+#   portfolio   → --portfolio
+#   signal      → --signal
+#   backtest    → --symbol / --tickers (or default universe)
+#   random      → --random-universe
+#
+# To switch mode, either:
+#   a) Edit the [mode] section here, or
+#   b) Pass the relevant CLI flag (always takes priority)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ACTIVE MODE
+# ─────────────────────────────────────────────────────────────────────────────
+[mode]
+# One of: "portfolio" | "signal" | "backtest" | "random"
+# CLI flags (--portfolio, --signal, --symbol, --random-universe) always override.
+default = "portfolio"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PORTFOLIO MODE  (mode = "portfolio")
+# ─────────────────────────────────────────────────────────────────────────────
+[portfolio]
+# Path to your holdings CSV.  Relative paths are resolved from the directory
+# where you run the script (i.e. the SAC workspace root).
+holdings = "v2_9p/holdings.json"
+
+# Your total portfolio capital in dollars.
+# Set to 0 to let the system auto-estimate from holdings market value.
+capital = 12_000
+
+# Maximum number of concurrent positions (slot size = capital / max_positions).
+max_positions = 15
+
+# Tickers to scan for new buy signals every day.
+# Add or remove freely — the system only alerts on signals, does NOT auto-trade.
+watchlist = [
+    # 原核心（保留）
+    "NVDA", "AAPL", "MSFT", "AVGO", "TSLA", "META",
+    "AMZN", "GOOGL", "COST", "LLY", "NFLX",
+    "AMD", "MU", "AMAT", "QCOM", "TXN",
+    "UNH", "ABBV", "JNJ", "TMO", "ISRG",
+    "BAC", "GS",
+    "PL", "NOK", "COHR", "APH", "CIEN",
+
+    # 新增（高动量、大市值、趋势友好）
+    "ADBE",          # 软件龙头，经常出现大趋势
+    "CRM",           # SaaS，动量明显
+    "ORCL",          # 数据库+云，近期趋势强
+    "MRVL",          # 半导体，AI相关
+    "LRCX",          # 半导体设备，高动量
+    "KLAC",          # 半导体设备，高动量
+    "PANW",          # 网络安全龙头，趋势性强
+    "CRWD",          # 云安全，高波动但易出趋势
+    "SNOW",          # 数据云，成长股
+    "NOW",           # 数字工作流，趋势好
+    "VRTX",          # 生物科技，趋势稳定
+    "REGN",          # 生物科技，趋势明显
+    "HD",            # 家得宝，消费中较有趋势
+    "NKE",           # 耐克，消费动量股
+    "SBUX",          # 星巴克，有时趋势
+    "CAT",           # 卡特彼勒，工业周期趋势
+    "GE",            # 通用电气，工业复苏趋势
+    "UBER",          # 网约车，高波动但趋势性强
+    "DASH",          # 外卖平台，成长股
+    "SHOP",          # 电商平台，高动量
+    "MELI",          # 拉美电商，长期趋势
+    "CDNS",          # EDA软件，半导体上游
+    "SNPS",          # EDA软件，类似CDNS
+    "ANET",          # 云网络，高增长
+    "DELL",          # 硬件，AI服务器受益（你已持有）
+    "HPE",           # 边缘计算，趋势有时
+    "WDC",           # 存储芯片，与MU类似
+    "STX",           # 硬盘，周期性趋势
+    "FSLR",          # 太阳能，高波动，趋势有时
+    "ENPH",          # 光伏逆变器，趋势性强但已过气？酌情
+    "ON",            # 半导体，汽车/工业芯片
+    "MPWR",          # 模拟芯片，趋势好
+    "NXPI",          # 车用芯片，趋势有时
+]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SIGNAL MODE  (mode = "signal")
+# ─────────────────────────────────────────────────────────────────────────────
+[signal]
+# Ticker to check (comma-separated for multiple: "NVDA,AAPL,MSFT").
+ticker = "NVDA"
+
+# Set to your average entry price (>0) to get HOLD/SELL advice for a held position.
+# Set to 0 (or omit) to get a fresh entry signal.
+entry_price = 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BACKTEST MODE  (mode = "backtest")
+# ─────────────────────────────────────────────────────────────────────────────
+[backtest]
+# Single ticker override (empty string → use tickers list below).
+symbol = ""
+
+# List of tickers to backtest.  Ignored if symbol is set.
+# Leave empty ([]) to use the built-in DEFAULT_TICKERS universe.
+tickers = []
+
+from_year = 2020
+to_year   = 0          # 0 = current year
+
+no_log    = false      # true = skip writing a log file
+no_charts = false      # true = skip saving chart PNGs
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RANDOM UNIVERSE MODE  (mode = "random")
+# ─────────────────────────────────────────────────────────────────────────────
+[random]
+n_stocks  = 20         # stocks per trial drawn from SP500_POOL
+trials    = 20         # number of Monte Carlo trials
+from_year = 2020
+to_year   = 0          # 0 = current year
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RISK MANAGEMENT  (used by portfolio mode)
+# ─────────────────────────────────────────────────────────────────────────────
+[risk]
+# Dollar risk per trade as % of total portfolio capital.
+# Shares = (portfolio * risk_per_trade_pct/100) / (price * stop_distance_pct)
+risk_per_trade_pct = 2.0
+
+# Minimum profit % a held position needs before pyramid is considered.
+min_profit_for_pyramid = 5.0   # e.g. 5.0 means +5% P&L required
+
+# Minimum cushion % between current price and stop before pyramid is allowed.
+min_cushion_for_pyramid = 8.0  # e.g. 8.0 means stop must be >8% away
+
+# Keep at least this % of portfolio as uninvested cash before issuing new buys.
+cash_reserve_pct = 10.0        # e.g. 10.0 = hold ≥10% cash buffer
+
+# Maximum number of new buy signals shown in the ranked list (others listed below).
+top_signals = 5
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CONFIDENCE FILTERING  (used by portfolio mode AND backtest)
+# ─────────────────────────────────────────────────────────────────────────────
+# Score is a 0-1 composite: RS-vs-SPY (40%) + ADX-14 (40%) + SMA200-dist (20%)
+# The same formula and thresholds are applied in both backtest and live mode,
+# so simulated results reflect exactly what the live system would act on.
+[confidence]
+# Minimum score for a new watchlist buy to be recommended / entered in backtest.
+# Below this, the system says "no high-confidence signals" rather than forcing
+# a trade on a weak setup.
+min_buy_confidence = 0.60
+
+# Pyramids (adding to winners) require slightly higher conviction.
+min_pyramid_confidence = 0.65
+
+# Score below which a held position gets a "⚠ trend weakening" warning note.
+# Does NOT trigger an automatic sell — stops handle that.
+warn_hold_confidence = 0.40

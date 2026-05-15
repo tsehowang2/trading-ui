@@ -1,0 +1,119 @@
+:root {
+    --bg: #0a0a0f;
+    --card: #16161f;
+    --border: #2a2a35;
+    --text: #e0e0e0;
+    --text-muted: #888;
+    --green: #00ff9d;
+    --red: #ff4d4d;
+    --blue: #4d9fff;
+}
+
+body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+.wrapper {
+    display: flex;
+    min-height: 100vh;
+}
+
+.sidebar {
+    width: 260px;
+    background: #111118;
+    border-right: 1px solid var(--border);
+    padding: 1.5rem 1rem;
+    position: fixed;
+    height: 100vh;
+    overflow-y: auto;
+}
+
+.sidebar-header h4 {
+    color: #00ff9d;
+    margin-bottom: 2rem;
+    font-weight: 600;
+}
+
+.nav-link {
+    color: var(--text);
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 4px;
+    transition: all 0.2s;
+}
+
+.nav-link:hover,
+.nav-link.active {
+    background: #1f1f2b;
+    color: white;
+}
+
+.main-content {
+    margin-left: 260px;
+    flex: 1;
+    width: calc(100% - 260px);
+}
+
+.topbar {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 1rem 2rem;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+.card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.table {
+    --bs-table-bg: transparent;
+    --bs-table-color: var(--text);
+    --bs-table-border-color: var(--border);
+}
+
+.table thead th {
+    border-top: none;
+    color: var(--text-muted);
+    font-weight: 500;
+    text-transform: uppercase;
+    font-size: 0.85rem;
+}
+
+.positive { color: var(--green); }
+.negative { color: var(--red); }
+
+.btn-success { background: #00cc7a; border: none; }
+.btn-danger { background: #ff3366; border: none; }
+
+/* TradingView-like table hover */
+.table-hover tbody tr:hover {
+    background: #1f1f2b !important;
+    transform: scale(1.01);
+    transition: all 0.2s;
+}
+
+/* Modal */
+.modal-content {
+    background: #16161f;
+    border: 1px solid #2a2a35;
+    border-radius: 12px;
+}
+
+.form-control {
+    background: #0f0f17;
+    border: 1px solid #2a2a35;
+    color: white;
+}
+
+.form-control:focus {
+    background: #0f0f17;
+    border-color: #00ff9d;
+    box-shadow: 0 0 0 0.2rem rgba(0, 255, 157, 0.25);
+}
