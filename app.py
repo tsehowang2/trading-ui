@@ -13,6 +13,7 @@ from main import (run_backtest, _get_live_indicators, save_results, RESULTS_DIR,
                   _bmark_voo_lumpsum, _bmark_dca_voo, _bmark_6040, _bmark_inv_vol_voo, _bmark_random_entry)
 from data import cached_download
 import pandas as pd
+import db  # PostgreSQL storage module
 
 app = Flask(__name__, template_folder=os.path.join(_HERE, 'templates'))
 app.secret_key = "your-secret-key"
@@ -20,16 +21,27 @@ app.secret_key = "your-secret-key"
 HOLDINGS_PATH  = os.path.join(_HERE, "holdings.json")
 CACHE_PATH     = os.path.join(_HERE, "results", "portfolio_cache.json")
 
-# ── JSON holdings helpers ──────────────────────────────────────────────────────
+# ── Holdings storage helpers (Postgres with JSON fallback) ────────────────────
 def _read_holdings_json() -> list[dict]:
-    """Return raw holdings list from JSON (no live enrichment)."""
+    """Return raw holdings list from Postgres (or JSON fallback)."""
+    # Try PostgreSQL first
+    if db.DATABASE_URL:
+        holdings = db.read_holdings_db()
+        if holdings is not None:
+            return holdings
+    
+    # Fallback to JSON file
     if not os.path.exists(HOLDINGS_PATH):
         return []
-    with open(HOLDINGS_PATH, encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(HOLDINGS_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"[HOLDINGS] JSON read error: {e}")
+        return []
 
 def _write_holdings_json(rows: list[dict]) -> None:
-    """Persist holdings list to JSON (only canonical fields)."""
+    """Persist holdings list to Postgres (or JSON fallback)."""
     clean = []
     for h in rows:
         ticker = str(h.get("ticker", "")).strip().upper()
@@ -41,8 +53,26 @@ def _write_holdings_json(rows: list[dict]) -> None:
             shares      = float(h.get("shares", 0)),
             notes       = str(h.get("notes", "")),
         ))
-    with open(HOLDINGS_PATH, "w", encoding="utf-8") as f:
-        json.dump(clean, f, indent=2)
+    
+    # Try PostgreSQL first
+    if db.DATABASE_URL:
+        if db.write_holdings_db(clean):
+            print(f"[HOLDINGS] Saved {len(clean)} holdings to PostgreSQL")
+            # Also write to JSON as backup
+            try:
+                with open(HOLDINGS_PATH, "w", encoding="utf-8") as f:
+                    json.dump(clean, f, indent=2)
+            except Exception:
+                pass  # JSON backup is optional
+            return
+    
+    # Fallback to JSON file
+    try:
+        with open(HOLDINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(clean, f, indent=2)
+        print(f"[HOLDINGS] Saved {len(clean)} holdings to JSON file")
+    except Exception as e:
+        print(f"[HOLDINGS] Write error: {e}")
 
 def safe_round(value, default=0.0):
     if value is None or not isinstance(value, (int, float)) or not math.isfinite(value):
@@ -102,7 +132,14 @@ def api_holdings():
         _write_holdings_json(holdings)
         return jsonify({"status": "success"})
     elif request.method == 'DELETE':
-        ticker   = request.args.get('ticker', '').upper()
+        ticker = request.args.get('ticker', '').upper()
+        
+        # Try direct DB delete if using PostgreSQL (more efficient)
+        if db.DATABASE_URL and db.delete_holding_db(ticker):
+            print(f"[HOLDINGS] Deleted {ticker} from PostgreSQL")
+            return jsonify({"status": "success"})
+        
+        # Fallback: read all, filter, write back
         holdings = [h for h in _read_holdings_json() if h['ticker'] != ticker]
         _write_holdings_json(holdings)
         return jsonify({"status": "success"})
