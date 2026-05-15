@@ -340,4 +340,4 @@ def api_dashboard():
 
 if __name__ == '__main__':
     print("[FLASK] Starting v2.9p Dashboard with REAL backtest engine")
-    app.run(debug=True, port=5000, host='127.0.0.1')
+    app.run(debug=False, port=5000, host='0.0.0.0')
