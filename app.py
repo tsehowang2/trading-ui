@@ -316,7 +316,10 @@ def debug_storage():
         "holdings_from_db": db.read_holdings_db() if db.DATABASE_URL else None,
         "holdings_from_json": _read_holdings_json(),
         "json_file_exists": os.path.exists(HOLDINGS_PATH),
-        "json_file_path": HOLDINGS_PATH
+        "json_file_path": HOLDINGS_PATH,
+        "portfolio_cache_from_db": db.read_portfolio_cache_db() if db.DATABASE_URL else None,
+        "portfolio_cache_json_exists": os.path.exists(CACHE_PATH),
+        "portfolio_cache_path": CACHE_PATH
     })
 
 
@@ -333,13 +336,25 @@ def dashboard():
 @app.route('/api/dashboard/cached')
 def api_dashboard_cached():
     """Return the last cached portfolio analysis result (instant, no recompute)."""
+    # Try PostgreSQL first
+    if db.DATABASE_URL:
+        cache_data = db.read_portfolio_cache_db()
+        if cache_data:
+            return jsonify({"success": True, "cached": True, "data": cache_data})
+    
+    # Fallback to JSON file
     if not os.path.exists(CACHE_PATH):
         return jsonify({"success": False, "cached": False, "error": "No cache yet — click Refresh to run analysis."})
-    with open(CACHE_PATH, encoding="utf-8") as f:
-        data = json.load(f)
-    mtime = os.path.getmtime(CACHE_PATH)
-    data["_cache_time"] = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-    return jsonify({"success": True, "cached": True, "data": data})
+    
+    try:
+        with open(CACHE_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        mtime = os.path.getmtime(CACHE_PATH)
+        data["_cache_time"] = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+        return jsonify({"success": True, "cached": True, "data": data})
+    except Exception as e:
+        print(f"[CACHE] Read error: {e}")
+        return jsonify({"success": False, "cached": False, "error": "Cache read failed"})
 
 
 @app.route('/api/dashboard/refresh')
@@ -401,6 +416,23 @@ def api_dashboard():
             warn_hold_confidence   = warn_hold,
         )
         data["_cache_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Save to PostgreSQL cache (primary)
+        if db.DATABASE_URL:
+            if db.write_portfolio_cache_db(data):
+                print("[CACHE] ✓ Saved to PostgreSQL")
+            else:
+                print("[CACHE] ⚠ PostgreSQL save failed, trying JSON fallback")
+        
+        # Also save to JSON file as backup (works locally and on Render ephemeral storage)
+        try:
+            os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
+            with open(CACHE_PATH, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            print("[CACHE] ✓ Saved to JSON file")
+        except Exception as e:
+            print(f"[CACHE] ⚠ JSON save failed: {e}")
+        
         return jsonify({"success": True, "cached": False, "data": data})
     except Exception as e:
         import traceback

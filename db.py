@@ -19,7 +19,7 @@ def get_connection():
     return psycopg2.connect(url, cursor_factory=RealDictCursor)
 
 def init_db():
-    """Initialize database table if it doesn't exist."""
+    """Initialize database tables if they don't exist."""
     if not DATABASE_URL:
         return False
     
@@ -29,6 +29,7 @@ def init_db():
             return False
         
         with conn.cursor() as cur:
+            # Holdings table
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS holdings (
                     ticker VARCHAR(20) PRIMARY KEY,
@@ -39,6 +40,17 @@ def init_db():
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            
+            # Portfolio cache table (JSONB for flexible schema)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS portfolio_cache (
+                    id INTEGER PRIMARY KEY DEFAULT 1,
+                    data JSONB NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT single_row CHECK (id = 1)
+                )
+            """)
+            
             conn.commit()
         conn.close()
         return True
@@ -138,6 +150,71 @@ def delete_holding_db(ticker: str) -> bool:
         return True
     except Exception as e:
         print(f"[DB] Delete error: {e}")
+        return False
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Portfolio Cache Operations
+# ══════════════════════════════════════════════════════════════════════════════
+
+def read_portfolio_cache_db() -> Optional[Dict]:
+    """Read portfolio cache from PostgreSQL. Returns None if not available."""
+    if not DATABASE_URL:
+        return None
+    
+    try:
+        conn = get_connection()
+        if not conn:
+            return None
+        
+        with conn.cursor() as cur:
+            cur.execute("SELECT data, updated_at FROM portfolio_cache WHERE id = 1")
+            row = cur.fetchone()
+        conn.close()
+        
+        if not row:
+            print("[DB] No portfolio cache found")
+            return None
+        
+        cache_data = dict(row['data'])
+        cache_data['_cache_time'] = row['updated_at'].strftime("%Y-%m-%d %H:%M:%S")
+        
+        print(f"[DB] ✓ Read portfolio cache (updated: {cache_data['_cache_time']})")
+        return cache_data
+    except Exception as e:
+        print(f"[DB] Portfolio cache read error: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def write_portfolio_cache_db(data: Dict) -> bool:
+    """Write portfolio cache to PostgreSQL. Uses UPSERT."""
+    if not DATABASE_URL:
+        return False
+    
+    try:
+        conn = get_connection()
+        if not conn:
+            return False
+        
+        import json
+        
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO portfolio_cache (id, data, updated_at)
+                VALUES (1, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (id) DO UPDATE SET
+                    data = EXCLUDED.data,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (json.dumps(data),))
+            conn.commit()
+        conn.close()
+        
+        print(f"[DB] ✓ Saved portfolio cache to PostgreSQL")
+        return True
+    except Exception as e:
+        print(f"[DB] Portfolio cache write error: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 # Initialize DB on module load if DATABASE_URL is set
