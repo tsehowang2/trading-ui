@@ -287,6 +287,7 @@ function render(d, cached) {
     return `<tr>
       <td><strong>${h.ticker}</strong></td>
       <td class="text-end dim">${fmtD(h.entry_price)}</td>
+      <td class="text-end dim">${h.shares ?? '—'}</td>
       <td class="text-end">${fmtD(h.current_price)}</td>
       <td class="text-end ${pnlClass(h.pnl_pct)}">${fmtP(h.pnl_pct)}</td>
       <td class="text-end ${pnlClass(h.pnl_dollars)}">${fmtD(h.pnl_dollars)}</td>
@@ -297,7 +298,6 @@ function render(d, cached) {
       <td class="text-end">${h.adx14 ?? '—'}</td>
       <td class="text-end ${h.rs_vs_spy >= 0 ? 'up':'dn'}">${fmtP(h.rs_vs_spy)}</td>
       <td>${badge(h.action_flag)}${warnHtml}</td>
-      <td class="text-end dim">${h.shares ?? '—'}</td>
       <td>
         <button class="btn-icon" onclick="openEditModal('${h.ticker}',${h.entry_price},${h.shares},'${(h.notes||'').replace(/'/g,"&#39;")}')">✎</button>
         <button class="btn-icon del" onclick="deleteHolding('${h.ticker}')">✕</button>
