@@ -1,0 +1,353 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block page_title %}Settings{% endblock %}
+
+{% block head %}
+<style>
+.settings-section { background:#1a1a1f; border-radius:8px; padding:1.25rem 1.5rem; margin-bottom:1.25rem; }
+.settings-section h5 { font-size:0.8rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase;
+    color:#64748b; margin-bottom:1rem; border-bottom:1px solid #2a2a35; padding-bottom:0.5rem; }
+.profile-card { background:#14141a; border:1px solid #2a2a35; border-radius:6px;
+    padding:0.75rem 1rem; display:flex; align-items:center; gap:0.75rem; margin-bottom:0.5rem; cursor:pointer;
+    transition:border-color .15s; }
+.profile-card:hover { border-color:#3b82f6; }
+.profile-card.active { border-color:#10b981; }
+.profile-card .profile-name { font-weight:600; font-size:0.9rem; color:#e0e0e0; flex:1; }
+.profile-card .badge-active { background:#0d2918; color:#10b981; border:1px solid #10b981;
+    font-size:0.65rem; padding:0.1rem 0.45rem; border-radius:3px; font-weight:700; }
+.form-label-sm { font-size:0.72rem; color:#94a3b8; font-weight:600; text-transform:uppercase;
+    letter-spacing:0.04em; margin-bottom:0.25rem; }
+.input-dark { background:#14141a; border:1px solid #2a2a35; color:#e0e0e0; border-radius:5px;
+    padding:0.4rem 0.6rem; font-size:0.85rem; width:100%; }
+.input-dark:focus { outline:none; border-color:#3b82f6; }
+.btn-icon { background:transparent; border:1px solid #2a2a35; color:#94a3b8; border-radius:4px;
+    padding:0.2rem 0.5rem; font-size:0.75rem; cursor:pointer; transition:all .15s; }
+.btn-icon:hover { border-color:#ef4444; color:#ef4444; }
+.ticker-chip { display:inline-flex; align-items:center; gap:0.35rem; background:#1e293b;
+    border:1px solid #334155; border-radius:4px; padding:0.2rem 0.5rem; font-size:0.75rem;
+    color:#94a3b8; font-family:'JetBrains Mono',monospace; margin:0.15rem; }
+.ticker-chip button { background:none; border:none; color:#64748b; cursor:pointer;
+    padding:0; line-height:1; font-size:0.8rem; }
+.ticker-chip button:hover { color:#ef4444; }
+#wlInput { font-family:'JetBrains Mono',monospace; text-transform:uppercase; }
+.holdings-table { width:100%; font-size:0.78rem; border-collapse:collapse; }
+.holdings-table th { color:#64748b; font-size:0.65rem; font-weight:600; text-transform:uppercase;
+    letter-spacing:.04em; padding:0.375rem 0.5rem; border-bottom:1px solid #2a2a35; }
+.holdings-table td { padding:0.5rem; border-bottom:1px solid #1e1e28; font-family:'JetBrains Mono',monospace; }
+.holdings-table tr:last-child td { border-bottom:none; }
+.holding-input { background:#14141a; border:1px solid #2a2a35; color:#e0e0e0;
+    border-radius:4px; padding:0.25rem 0.4rem; font-size:0.78rem; width:100%;
+    font-family:'JetBrains Mono',monospace; }
+.holding-input:focus { outline:none; border-color:#3b82f6; }
+.toast-msg { position:fixed; bottom:1.5rem; right:1.5rem; background:#0d2918; border:1px solid #10b981;
+    color:#6ee36e; border-radius:6px; padding:0.6rem 1rem; font-size:0.82rem; z-index:9999;
+    display:none; animation:fadeInUp .25s ease; }
+@keyframes fadeInUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+
+<div class="toast-msg" id="toast"></div>
+
+<div class="row g-3">
+
+  <!-- LEFT: Profile list -->
+  <div class="col-12 col-lg-3">
+    <div class="settings-section">
+      <h5><i class="fas fa-layer-group me-2"></i>Profiles</h5>
+      <div id="profileList"></div>
+      <div class="mt-3 d-flex gap-2">
+        <input id="newProfileName" class="input-dark flex-1" placeholder="New profile name…" style="flex:1">
+        <button class="btn btn-sm btn-outline-success" onclick="createProfile()">
+          <i class="fas fa-plus"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Settings editor -->
+  <div class="col-12 col-lg-9" id="editorPanel" style="display:none">
+
+    <!-- Portfolio parameters -->
+    <div class="settings-section">
+      <h5><i class="fas fa-sliders me-2"></i>Portfolio Parameters
+        <span id="profileNameBadge" class="ms-2 badge-active" style="display:inline"></span>
+      </h5>
+      <div class="row g-3">
+        <div class="col-6 col-md-3">
+          <label class="form-label-sm">Capital ($)</label>
+          <input id="fCapital" type="number" class="input-dark" min="0" step="1000">
+        </div>
+        <div class="col-6 col-md-3">
+          <label class="form-label-sm">Max Positions</label>
+          <input id="fMaxPos" type="number" class="input-dark" min="1" max="50">
+        </div>
+        <div class="col-6 col-md-3">
+          <label class="form-label-sm">Risk / Trade (%)</label>
+          <input id="fRiskPct" type="number" class="input-dark" min="0.1" max="10" step="0.1">
+        </div>
+        <div class="col-6 col-md-3">
+          <label class="form-label-sm">Cash Reserve (%)</label>
+          <input id="fCashRes" type="number" class="input-dark" min="0" max="50" step="1">
+        </div>
+        <div class="col-6 col-md-3">
+          <label class="form-label-sm">Min Profit for Pyramid (%)</label>
+          <input id="fMinProfit" type="number" class="input-dark" min="0" step="0.5">
+        </div>
+        <div class="col-6 col-md-3">
+          <label class="form-label-sm">Min Cushion for Pyramid (%)</label>
+          <input id="fMinCushion" type="number" class="input-dark" min="0" step="0.5">
+        </div>
+        <div class="col-6 col-md-3">
+          <label class="form-label-sm">Min Buy Confidence</label>
+          <input id="fMinBuy" type="number" class="input-dark" min="0" max="1" step="0.01">
+        </div>
+        <div class="col-6 col-md-3">
+          <label class="form-label-sm">Min Pyramid Confidence</label>
+          <input id="fMinPyr" type="number" class="input-dark" min="0" max="1" step="0.01">
+        </div>
+      </div>
+      <div class="mt-3 d-flex gap-2">
+        <button class="btn btn-sm btn-outline-success" onclick="saveParams()">
+          <i class="fas fa-save me-1"></i>Save Parameters
+        </button>
+        <button class="btn btn-sm btn-outline-danger ms-auto" onclick="deleteCurrentProfile()">
+          <i class="fas fa-trash me-1"></i>Delete Profile
+        </button>
+      </div>
+    </div>
+
+    <!-- Watchlist -->
+    <div class="settings-section">
+      <h5><i class="fas fa-binoculars me-2"></i>Watchlist</h5>
+      <div id="watchlistChips" class="mb-2"></div>
+      <div class="d-flex gap-2 mt-2">
+        <input id="wlInput" class="input-dark" placeholder="TICKER" style="max-width:140px;text-transform:uppercase">
+        <button class="btn btn-sm btn-outline-primary" onclick="addTicker()">
+          <i class="fas fa-plus me-1"></i>Add
+        </button>
+        <button class="btn btn-sm btn-outline-success ms-auto" onclick="saveWatchlist()">
+          <i class="fas fa-save me-1"></i>Save Watchlist
+        </button>
+      </div>
+    </div>
+
+    <!-- Holdings -->
+    <div class="settings-section">
+      <h5><i class="fas fa-briefcase me-2"></i>Holdings</h5>
+      <div class="table-responsive">
+        <table class="holdings-table">
+          <thead>
+            <tr>
+              <th>Ticker</th><th>Entry Price</th><th>Shares</th><th>Notes</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="holdingsBody"></tbody>
+        </table>
+      </div>
+      <div class="d-flex gap-2 mt-3 flex-wrap">
+        <button class="btn btn-sm btn-outline-primary" onclick="addHoldingRow()">
+          <i class="fas fa-plus me-1"></i>Add Row
+        </button>
+        <button class="btn btn-sm btn-outline-success ms-auto" onclick="saveHoldings()">
+          <i class="fas fa-save me-1"></i>Save Holdings
+        </button>
+      </div>
+    </div>
+
+  </div><!-- /editorPanel -->
+</div><!-- /row -->
+</div>
+
+<script>
+let profiles = [];
+let activeId = null;
+let editingId = null;
+let watchlist = [];
+
+async function loadProfiles() {
+  const res = await fetch('/api/profiles');
+  profiles = await res.json();
+  activeId = (profiles.find(p => p.is_active) || profiles[0] || {}).id || null;
+  renderProfileList();
+  if (profiles.length > 0) selectProfile(activeId || profiles[0].id);
+}
+
+function renderProfileList() {
+  const el = document.getElementById('profileList');
+  el.innerHTML = profiles.map(p => `
+    <div class="profile-card ${p.id === editingId ? 'active' : ''}" onclick="selectProfile(${p.id})">
+      <span class="profile-name">${esc(p.name)}</span>
+      ${p.is_active ? '<span class="badge-active">ACTIVE</span>' : ''}
+      ${!p.is_active ? `<button class="btn-icon" title="Set active" onclick="event.stopPropagation();setActive(${p.id})"><i class="fas fa-check"></i></button>` : ''}
+    </div>
+  `).join('');
+}
+
+function selectProfile(id) {
+  editingId = id;
+  renderProfileList();
+  const p = profiles.find(x => x.id === id);
+  if (!p) return;
+  document.getElementById('editorPanel').style.display = '';
+  document.getElementById('profileNameBadge').textContent = p.name;
+  document.getElementById('fCapital').value    = p.capital;
+  document.getElementById('fMaxPos').value     = p.max_positions;
+  document.getElementById('fRiskPct').value    = p.risk_per_trade_pct;
+  document.getElementById('fCashRes').value    = p.cash_reserve_pct;
+  document.getElementById('fMinProfit').value  = p.min_profit_for_pyramid;
+  document.getElementById('fMinCushion').value = p.min_cushion_for_pyramid;
+  document.getElementById('fMinBuy').value     = p.min_buy_confidence;
+  document.getElementById('fMinPyr').value     = p.min_pyramid_confidence;
+  watchlist = [...(p.watchlist || [])];
+  renderWatchlist();
+  loadHoldings(id);
+}
+
+function renderWatchlist() {
+  document.getElementById('watchlistChips').innerHTML = watchlist.map((t,i) => `
+    <span class="ticker-chip">${esc(t)}<button onclick="removeTicker(${i})">&times;</button></span>
+  `).join('');
+}
+
+function addTicker() {
+  const inp = document.getElementById('wlInput');
+  const t = inp.value.trim().toUpperCase().replace(/[^A-Z0-9.]/g,'');
+  if (!t || watchlist.includes(t)) { inp.value=''; return; }
+  watchlist.push(t);
+  inp.value = '';
+  renderWatchlist();
+}
+document.getElementById('wlInput').addEventListener('keydown', e => { if(e.key==='Enter') addTicker(); });
+
+function removeTicker(i) { watchlist.splice(i,1); renderWatchlist(); }
+
+async function saveWatchlist() {
+  const res = await fetch(`/api/profiles/${editingId}`, {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({watchlist})
+  });
+  const d = await res.json();
+  if (res.ok) { showToast('Watchlist saved'); await loadProfiles(); selectProfile(editingId); }
+  else showToast(d.error || 'Error', true);
+}
+
+async function saveParams() {
+  const body = {
+    capital:                parseFloat(document.getElementById('fCapital').value),
+    max_positions:          parseInt(document.getElementById('fMaxPos').value),
+    risk_per_trade_pct:     parseFloat(document.getElementById('fRiskPct').value),
+    cash_reserve_pct:       parseFloat(document.getElementById('fCashRes').value),
+    min_profit_for_pyramid: parseFloat(document.getElementById('fMinProfit').value),
+    min_cushion_for_pyramid:parseFloat(document.getElementById('fMinCushion').value),
+    min_buy_confidence:     parseFloat(document.getElementById('fMinBuy').value),
+    min_pyramid_confidence: parseFloat(document.getElementById('fMinPyr').value),
+  };
+  const res = await fetch(`/api/profiles/${editingId}`, {
+    method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+  });
+  if (res.ok) { showToast('Parameters saved'); await loadProfiles(); }
+  else { const d = await res.json(); showToast(d.error || 'Error', true); }
+}
+
+async function setActive(id) {
+  const res = await fetch('/api/profiles/active', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({profile_id: id})
+  });
+  if (res.ok) { showToast('Active profile changed'); await loadProfiles(); selectProfile(editingId); }
+}
+
+async function createProfile() {
+  const inp = document.getElementById('newProfileName');
+  const name = inp.value.trim();
+  if (!name) return;
+  const res = await fetch('/api/profiles', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name})
+  });
+  const d = await res.json();
+  if (res.ok) { inp.value=''; showToast('Profile created'); await loadProfiles(); selectProfile(d.id); }
+  else showToast(d.error || 'Error', true);
+}
+
+async function deleteCurrentProfile() {
+  if (profiles.length <= 1) { showToast('Cannot delete the only profile', true); return; }
+  if (!confirm(`Delete profile "${(profiles.find(p=>p.id===editingId)||{}).name}"? This also deletes its holdings.`)) return;
+  const res = await fetch(`/api/profiles/${editingId}`, {method:'DELETE'});
+  if (res.ok) {
+    showToast('Profile deleted');
+    await loadProfiles();
+    if (profiles.length > 0) selectProfile(profiles[0].id);
+    else document.getElementById('editorPanel').style.display = 'none';
+  }
+}
+
+// ── Holdings ──────────────────────────────────────────────────────────────────
+let holdingsData = [];
+
+async function loadHoldings(profileId) {
+  const res = await fetch(`/api/profiles/${profileId}/holdings`);
+  holdingsData = await res.json();
+  renderHoldings();
+}
+
+function renderHoldings() {
+  const tbody = document.getElementById('holdingsBody');
+  tbody.innerHTML = holdingsData.map((h, i) => `
+    <tr>
+      <td><input class="holding-input" data-i="${i}" data-f="ticker" value="${esc(h.ticker)}" style="width:80px;text-transform:uppercase"></td>
+      <td><input class="holding-input" type="number" data-i="${i}" data-f="entry_price" value="${h.entry_price}" step="0.01" min="0" style="width:90px"></td>
+      <td><input class="holding-input" type="number" data-i="${i}" data-f="shares" value="${h.shares}" step="0.01" min="0" style="width:80px"></td>
+      <td><input class="holding-input" data-i="${i}" data-f="notes" value="${esc(h.notes||'')}" style="width:160px"></td>
+      <td><button class="btn-icon" onclick="removeHolding(${i})"><i class="fas fa-trash-alt"></i></button></td>
+    </tr>
+  `).join('');
+  // Live-edit updates
+  tbody.querySelectorAll('.holding-input').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const i = +inp.dataset.i, f = inp.dataset.f;
+      holdingsData[i][f] = (f === 'ticker') ? inp.value.toUpperCase() : (f === 'notes' ? inp.value : parseFloat(inp.value) || 0);
+    });
+  });
+}
+
+function addHoldingRow() {
+  holdingsData.push({ticker:'', entry_price:0, shares:0, notes:''});
+  renderHoldings();
+  // Focus the last ticker input
+  const inputs = document.querySelectorAll('#holdingsBody input[data-f="ticker"]');
+  if (inputs.length) inputs[inputs.length-1].focus();
+}
+
+function removeHolding(i) { holdingsData.splice(i,1); renderHoldings(); }
+
+async function saveHoldings() {
+  const clean = holdingsData.filter(h => h.ticker && h.ticker.trim());
+  const res = await fetch(`/api/profiles/${editingId}/holdings`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({_bulk: true, holdings: clean})
+  });
+  if (res.ok) { showToast('Holdings saved'); holdingsData = clean; renderHoldings(); }
+  else { const d = await res.json(); showToast(d.error || 'Error', true); }
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+function showToast(msg, isErr=false) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.background = isErr ? '#2d0a0a' : '#0d2918';
+  t.style.borderColor = isErr ? '#ef4444' : '#10b981';
+  t.style.color       = isErr ? '#f87171' : '#6ee36e';
+  t.style.display = 'block';
+  setTimeout(() => { t.style.display='none'; }, 2800);
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+loadProfiles();
+</script>
+{% endblock %}

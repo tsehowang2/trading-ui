@@ -21,61 +21,19 @@ app.secret_key = "your-secret-key"
 HOLDINGS_PATH  = os.path.join(_HERE, "holdings.json")
 CACHE_PATH     = os.path.join(_HERE, "results", "portfolio_cache.json")
 
-# ── Holdings storage helpers (Postgres with JSON fallback) ────────────────────
-def _read_holdings_json() -> list[dict]:
-    """Return raw holdings list from Postgres (or JSON fallback)."""
-    # Try PostgreSQL first
-    if db.DATABASE_URL:
-        holdings = db.read_holdings_db()
-        if holdings is not None:
-            return holdings
-    
-    # Fallback to JSON file
-    if not os.path.exists(HOLDINGS_PATH):
-        return []
-    try:
-        with open(HOLDINGS_PATH, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"[HOLDINGS] JSON read error: {e}")
-        return []
+# ── Profile-aware holdings helpers ───────────────────────────────────────────
+def _get_active_profile_id() -> int:
+    return db.get_active_profile_id()
 
-def _write_holdings_json(rows: list[dict]) -> None:
-    """Persist holdings list to Postgres (or JSON fallback)."""
-    clean = []
-    for h in rows:
-        ticker = str(h.get("ticker", "")).strip().upper()
-        if not ticker:
-            continue
-        clean.append(dict(
-            ticker      = ticker,
-            entry_price = float(h.get("entry_price", 0)),
-            shares      = float(h.get("shares", 0)),
-            notes       = str(h.get("notes", "")),
-        ))
-    
-    # Try PostgreSQL first
-    if db.DATABASE_URL:
-        if db.write_holdings_db(clean):
-            print(f"[HOLDINGS] ✓ Saved {len(clean)} holdings to PostgreSQL")
-            # CRITICAL: Also write to JSON file for portfolio analysis
-            # (main.py reads from file, not DB)
-            try:
-                os.makedirs(os.path.dirname(HOLDINGS_PATH), exist_ok=True)
-                with open(HOLDINGS_PATH, "w", encoding="utf-8") as f:
-                    json.dump(clean, f, indent=2)
-                print(f"[HOLDINGS] ✓ Synced to JSON file for portfolio analysis")
-            except Exception as e:
-                print(f"[HOLDINGS] ⚠ JSON sync failed: {e}")
-            return
-    
-    # Fallback to JSON file
-    try:
-        with open(HOLDINGS_PATH, "w", encoding="utf-8") as f:
-            json.dump(clean, f, indent=2)
-        print(f"[HOLDINGS] Saved {len(clean)} holdings to JSON file")
-    except Exception as e:
-        print(f"[HOLDINGS] Write error: {e}")
+def _read_holdings_json(profile_id: int | None = None) -> list[dict]:
+    """Return raw holdings for the given (or active) profile."""
+    pid = profile_id if profile_id is not None else _get_active_profile_id()
+    return db.read_holdings_for_profile(pid)
+
+def _write_holdings_json(rows: list[dict], profile_id: int | None = None) -> None:
+    """Persist holdings for the given (or active) profile."""
+    pid = profile_id if profile_id is not None else _get_active_profile_id()
+    db.write_holdings_for_profile(pid, rows)
 
 def safe_round(value, default=0.0):
     if value is None or not isinstance(value, (int, float)) or not math.isfinite(value):
@@ -95,14 +53,27 @@ def load_holdings():
         try:
             ind = _get_live_indicators(ticker)
             if ind:
-                close     = ind.get('close', 0.0)
-                atr_frac  = ind.get('atr_frac', 0.15)
-                h['current_price'] = safe_round(close)
+                close       = ind.get('close', 0.0)
+                atr_frac    = ind.get('atr_frac', 0.15)
                 entry_price = float(h.get('entry_price', 0))
+                h['current_price'] = safe_round(close)
                 if entry_price > 0 and close > 0:
                     h['pnl_pct'] = safe_round((close - entry_price) / entry_price, 0.0)
                 h['mkt_value']  = safe_round(float(h.get('shares', 0)) * close, 0.0)
-                h['stop_price'] = safe_round(close * (1 - atr_frac), 0.0)
+                # compute peak-based trailing stop (mirrors get_portfolio_data logic)
+                if entry_price > 0 and ind.get('df') is not None:
+                    df_h   = ind['df']
+                    cls    = df_h['Close']
+                    below  = cls[cls <= entry_price * 1.005]
+                    if not below.empty:
+                        ei       = cls.index.get_loc(below.index[-1])
+                        pos_peak = max(entry_price, float(cls.iloc[ei:].max()))
+                    else:
+                        pos_peak = max(entry_price, close)
+                    pos_peak = max(pos_peak, entry_price)
+                else:
+                    pos_peak = max(entry_price, close) if entry_price > 0 else close
+                h['stop_price'] = safe_round(pos_peak * (1 - atr_frac), 0.0)
         except Exception as e:
             print(f"Indicator error for {ticker}: {e}")
         enriched.append(h)
@@ -138,15 +109,8 @@ def api_holdings():
         return jsonify({"status": "success"})
     elif request.method == 'DELETE':
         ticker = request.args.get('ticker', '').upper()
-        
-        # Try direct DB delete if using PostgreSQL (more efficient)
-        if db.DATABASE_URL and db.delete_holding_db(ticker):
-            print(f"[HOLDINGS] Deleted {ticker} from PostgreSQL")
-            return jsonify({"status": "success"})
-        
-        # Fallback: read all, filter, write back
-        holdings = [h for h in _read_holdings_json() if h['ticker'] != ticker]
-        _write_holdings_json(holdings)
+        pid = _get_active_profile_id()
+        db.delete_holding_for_profile(pid, ticker)
         return jsonify({"status": "success"})
 
 @app.route('/api/backtest/<ticker>')
@@ -361,47 +325,29 @@ def api_dashboard_cached():
 def api_dashboard():
     """Run a live portfolio analysis (slow), write cache, return result."""
     try:
-        import tomllib
-        config_path = os.path.join(_HERE, "config.toml")
-        cfg = {}
-        if os.path.exists(config_path):
-            with open(config_path, "rb") as f:
-                cfg = tomllib.load(f)
+        # Load settings from active profile (DB or JSON), not config.toml
+        profile = db.get_active_profile()
+        pid     = profile["id"]
 
-        p = cfg.get("portfolio", {})
-        r = cfg.get("risk", {})
-        s = cfg.get("confidence", {})
-
-        # Resolve holdings path relative to workspace root (same as CLI)
-        holdings_rel = p.get("holdings", "v2_9p/holdings.json")
-        if os.path.isabs(holdings_rel):
-            holdings_path = holdings_rel
-        else:
-            holdings_path = os.path.join(_ROOT, holdings_rel)
-
-        # ── CRITICAL: Sync PostgreSQL holdings to JSON file before analysis ──
-        # The portfolio analysis reads from a file, so we must ensure the file
-        # contains the latest holdings from the database (especially on Render
-        # where the filesystem is ephemeral).
-        holdings_from_db = _read_holdings_json()  # Reads from DB (or JSON fallback)
+        # Sync active-profile holdings to a temp JSON file (main.py reads from file)
+        holdings_from_profile = db.read_holdings_for_profile(pid)
+        holdings_path = os.path.join(_HERE, f"_holdings_profile_{pid}.json")
         try:
-            os.makedirs(os.path.dirname(holdings_path), exist_ok=True)
             with open(holdings_path, "w", encoding="utf-8") as f:
-                json.dump(holdings_from_db, f, indent=2)
-            print(f"[DASHBOARD] Synced {len(holdings_from_db)} holdings from DB to {holdings_path}")
+                json.dump(holdings_from_profile, f, indent=2)
         except Exception as sync_err:
-            print(f"[DASHBOARD] Warning: Could not sync holdings to file: {sync_err}")
-            # Continue anyway - maybe file already exists
+            print(f"[DASHBOARD] Warning: Could not write temp holdings file: {sync_err}")
+            holdings_path = HOLDINGS_PATH  # fallback
 
-        watchlist   = p.get("watchlist", [])
-        capital     = p.get("capital", None) or None
-        max_pos     = int(p.get("max_positions", 10))
-        risk_pct    = float(r.get("risk_per_trade_pct", 2.0))
-        reserve_pct = float(r.get("cash_reserve_pct", 10.0)) / 100.0
-        top_n       = int(r.get("top_signals", 5))
-        min_buy     = float(s.get("min_buy_confidence", 0.60))
-        min_pyr     = float(s.get("min_pyramid_confidence", 0.65))
-        warn_hold   = float(s.get("warn_hold_confidence", 0.40))
+        watchlist   = profile.get("watchlist", [])
+        capital     = profile.get("capital") or None
+        max_pos     = int(profile.get("max_positions", 10))
+        risk_pct    = float(profile.get("risk_per_trade_pct", 2.0))
+        reserve_pct = float(profile.get("cash_reserve_pct", 10.0)) / 100.0
+        top_n       = int(profile.get("top_signals", 5))
+        min_buy     = float(profile.get("min_buy_confidence", 0.60))
+        min_pyr     = float(profile.get("min_pyramid_confidence", 0.65))
+        warn_hold   = float(profile.get("warn_hold_confidence", 0.40))
 
         data = get_portfolio_data(
             holdings_csv           = holdings_path,
@@ -415,16 +361,18 @@ def api_dashboard():
             min_pyramid_confidence = min_pyr,
             warn_hold_confidence   = warn_hold,
         )
-        data["_cache_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
+        data["_cache_time"]   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        data["_profile_id"]   = pid
+        data["_profile_name"] = profile.get("name", "Default")
+
         # Save to PostgreSQL cache (primary)
         if db.DATABASE_URL:
             if db.write_portfolio_cache_db(data):
                 print("[CACHE] ✓ Saved to PostgreSQL")
             else:
                 print("[CACHE] ⚠ PostgreSQL save failed, trying JSON fallback")
-        
-        # Also save to JSON file as backup (works locally and on Render ephemeral storage)
+
+        # Also save to JSON file as backup
         try:
             os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
             with open(CACHE_PATH, "w", encoding="utf-8") as f:
@@ -432,12 +380,103 @@ def api_dashboard():
             print("[CACHE] ✓ Saved to JSON file")
         except Exception as e:
             print(f"[CACHE] ⚠ JSON save failed: {e}")
-        
+
         return jsonify({"success": True, "cached": False, "data": data})
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+# ══ Profile management API ════════════════════════════════════════════════════
+
+@app.route('/settings')
+def settings_page():
+    return render_template('settings.html')
+
+
+@app.route('/api/profiles', methods=['GET', 'POST'])
+def api_profiles():
+    if request.method == 'GET':
+        return jsonify(db.list_profiles())
+    # POST → create new profile
+    data = request.json or {}
+    name = str(data.get('name', '')).strip()
+    if not name:
+        return jsonify({"error": "Profile name required"}), 400
+    existing = [p for p in db.list_profiles() if p['name'].lower() == name.lower()]
+    if existing:
+        return jsonify({"error": "A profile with that name already exists"}), 409
+    settings = {k: data[k] for k in db.DEFAULT_PROFILE_SETTINGS if k in data}
+    profile = db.create_profile(name, settings)
+    if profile is None:
+        return jsonify({"error": "Failed to create profile"}), 500
+    return jsonify(profile), 201
+
+
+@app.route('/api/profiles/active', methods=['GET', 'POST'])
+def api_profiles_active():
+    if request.method == 'GET':
+        return jsonify(db.get_active_profile())
+    # POST → set active profile by id
+    data = request.json or {}
+    pid = data.get('profile_id')
+    if pid is None:
+        return jsonify({"error": "profile_id required"}), 400
+    if not db.set_active_profile(int(pid)):
+        return jsonify({"error": "Failed to set active profile"}), 500
+    return jsonify({"status": "ok", "active_profile_id": int(pid)})
+
+
+@app.route('/api/profiles/<int:profile_id>', methods=['PUT', 'DELETE'])
+def api_profile_detail(profile_id):
+    if request.method == 'PUT':
+        data = request.json or {}
+        if not db.update_profile(profile_id, data):
+            return jsonify({"error": "Update failed"}), 500
+        return jsonify({"status": "ok"})
+    # DELETE
+    if len(db.list_profiles()) <= 1:
+        return jsonify({"error": "Cannot delete the only profile"}), 400
+    if not db.delete_profile(profile_id):
+        return jsonify({"error": "Delete failed"}), 500
+    return jsonify({"status": "ok"})
+
+
+@app.route('/api/profiles/<int:profile_id>/holdings', methods=['GET', 'POST', 'DELETE'])
+def api_profile_holdings(profile_id):
+    if request.method == 'GET':
+        return jsonify(db.read_holdings_for_profile(profile_id))
+    if request.method == 'POST':
+        data   = request.json or {}
+        # Bulk replace all holdings at once (used by settings page)
+        if data.get('_bulk'):
+            rows = data.get('holdings', [])
+            db.write_holdings_for_profile(profile_id, rows)
+            return jsonify({"status": "ok"})
+        ticker = str(data.get('ticker', '')).strip().upper()
+        if not ticker:
+            return jsonify({"error": "ticker required"}), 400
+        holdings = db.read_holdings_for_profile(profile_id)
+        existing = next((h for h in holdings if h['ticker'] == ticker), None)
+        if existing:
+            existing['entry_price'] = float(data.get('entry_price', existing['entry_price']))
+            existing['shares']      = float(data.get('shares', existing['shares']))
+            existing['notes']       = str(data.get('notes', existing.get('notes', '')))
+        else:
+            holdings.append(dict(
+                ticker=ticker,
+                entry_price=float(data.get('entry_price', 0)),
+                shares=float(data.get('shares', 0)),
+                notes=str(data.get('notes', '')),
+            ))
+        db.write_holdings_for_profile(profile_id, holdings)
+        return jsonify({"status": "ok"})
+    # DELETE
+    ticker = request.args.get('ticker', '').upper()
+    db.delete_holding_for_profile(profile_id, ticker)
+    return jsonify({"status": "ok"})
+
 
 if __name__ == '__main__':
     print("[FLASK] Starting v2.9p Dashboard with REAL backtest engine")

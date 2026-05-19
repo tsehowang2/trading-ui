@@ -1309,11 +1309,13 @@ def run_signal(symbol: str, entry_price: float | None = None) -> None:
         at_or_below = closes[closes <= entry_price * 1.005]
         if not at_or_below.empty:
             entry_idx = closes.index.get_loc(at_or_below.index[-1])
-            pos_peak  = float(closes.iloc[entry_idx:].max())
+            pos_peak  = max(entry_price, float(closes.iloc[entry_idx:].max()))
             peak_note = "from price history"
         else:
             pos_peak  = max(entry_price, close)
             peak_note = "estimated"
+        if pos_peak < entry_price:
+            pos_peak = entry_price
 
         personal_stop = pos_peak * (1.0 - atr_frac)
         pnl_pct       = (close - entry_price) / entry_price
@@ -1599,9 +1601,11 @@ def run_portfolio(holdings_csv: str,
         at_or_below = closes[closes <= entry_price * 1.005]
         if not at_or_below.empty:
             entry_idx = closes.index.get_loc(at_or_below.index[-1])
-            pos_peak  = float(closes.iloc[entry_idx:].max())
+            pos_peak  = max(entry_price, float(closes.iloc[entry_idx:].max()))
         else:
             pos_peak  = max(entry_price, close)
+        if pos_peak < entry_price:
+            pos_peak = entry_price
 
         personal_stop = pos_peak * (1.0 - atr_frac)
         pnl_pct       = (close - entry_price) / entry_price
@@ -2123,9 +2127,11 @@ def get_portfolio_data(holdings_csv: str,
         at_or_below = closes[closes <= entry_price * 1.005]
         if not at_or_below.empty:
             entry_idx = closes.index.get_loc(at_or_below.index[-1])
-            pos_peak  = float(closes.iloc[entry_idx:].max())
+            pos_peak  = max(entry_price, float(closes.iloc[entry_idx:].max()))
         else:
             pos_peak  = max(entry_price, close)
+        if pos_peak < entry_price:
+            pos_peak = entry_price
 
         personal_stop = pos_peak * (1.0 - atr_frac)
         pnl_pct       = (close - entry_price) / entry_price

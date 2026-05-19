@@ -38,6 +38,11 @@
                         <i class="fas fa-chart-line"></i> Backtest
                     </a>
                 </li>
+                <li class="nav-item">
+                    <a href="{{ url_for('settings_page') }}" class="nav-link {% if request.endpoint == 'settings_page' %}active{% endif %}">
+                        <i class="fas fa-sliders-h"></i> Settings
+                    </a>
+                </li>
             </ul>
         </nav>
 
@@ -52,7 +57,9 @@
                             </button>
                             <h2 class="topbar-title">{% block page_title %}Portfolio Dashboard{% endblock %}</h2>
                         </div>
-                        <div class="topbar-meta">
+                        <div class="topbar-meta d-flex align-items-center gap-3">
+                            <span id="topbar-profile" style="font-size:0.72rem;color:#64748b;white-space:nowrap;"
+                                  title="Active profile"></span>
                             <span class="text-muted" id="last-updated">Last updated: Just now</span>
                         </div>
                     </div>
@@ -97,6 +104,16 @@
                 if (window.innerWidth < 992) closeMenu();
             });
         });
+    })();
+
+    // Show active profile name in topbar
+    (function() {
+        const el = document.getElementById('topbar-profile');
+        if (!el) return;
+        fetch('/api/profiles/active')
+            .then(r => r.json())
+            .then(p => { if (p && p.name) el.textContent = '\u25CF ' + p.name; })
+            .catch(() => {});
     })();
     </script>
     {% block scripts %}{% endblock %}
