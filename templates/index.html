@@ -712,6 +712,8 @@ function badge(flag) {
 }
 function pnlClass(v) { return v == null ? '' : v >= 0 ? 'up' : 'dn'; }
 
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
 // ── Profile selector ──────────────────────────────────────────────────────
 let _profiles = [];
 let _currentProfileId = null;
