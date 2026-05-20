@@ -1167,6 +1167,17 @@ def _get_live_indicators(symbol: str) -> dict | None:
         and consec_term >= CRASH_TERM_DAYS
     )
 
+    # How many CONSECUTIVE daily closes have been above SMA200? (freshness gauge)
+    # Used to distinguish a brand-new breakout from a stock already deep in a trend.
+    consec_above_sma200 = 0
+    _close_arr = df["Close"].values
+    _sma200_arr = df["sma200"].values
+    for _ci in range(len(_close_arr) - 1, -1, -1):
+        if _close_arr[_ci] > _sma200_arr[_ci]:
+            consec_above_sma200 += 1
+        else:
+            break
+
     # Determine entry verdict
     # 2-bar SMA200 confirmation: last two closes must be above SMA200
     two_bar_live = (
@@ -1236,6 +1247,7 @@ def _get_live_indicators(symbol: str) -> dict | None:
         entry_ok        = entry_ok,
         entry_gate      = entry_gate,
         entry_reason    = entry_reason,
+        consec_above_sma200 = consec_above_sma200,
         crash_conditions_met = crash_conditions_met,
         consec_bear     = consec_bear,
         consec_term     = consec_term,
@@ -2197,6 +2209,10 @@ def get_portfolio_data(holdings_csv: str,
         if action_flag == "HOLD+":
             pyramid_cands.append(dict(ind=ind, row=row))
 
+    # How many consecutive days above SMA200 marks a signal as "fresh" (not already deep in trend)
+    # The backtest fires a BUY the first time consec_above200 hits 2; beyond ~5 bars the entry is stale.
+    FRESH_SIGNAL_BARS = 5
+
     # ── Watchlist screening ───────────────────────────────────────────────────
     new_signals:      list[dict] = []
     trending_signals: list[dict] = []   # above SMA200 but no fresh entry signal today
@@ -2209,14 +2225,15 @@ def get_portfolio_data(holdings_csv: str,
         if ind is None:
             no_signals.append(dict(ticker=ticker_u, reason="data error"))
             continue
-        if ind["entry_ok"]:
+        if ind["entry_ok"] and ind.get("consec_above_sma200", 99) <= FRESH_SIGNAL_BARS:
+            # Fresh breakout: entry conditions just triggered (backtest would show BUY this week)
             new_signals.append(ind)
         elif ind["above_sma200"]:
-            trending_signals.append(ind)   # strong trend, signal already passed
+            # Already in trend OR entry conditions met but signal fired days/weeks ago
+            trending_signals.append(ind)
         else:
             no_signals.append(dict(ticker=ticker_u,
                                    reason=ind["entry_reason"].replace("NO ENTRY — ", "")))
-
     pyramid_cands.sort(key=lambda x: x["ind"]["score"], reverse=True)
     new_signals.sort(key=lambda x: x["score"], reverse=True)
     trending_signals.sort(key=lambda x: x["score"], reverse=True)
@@ -2289,6 +2306,7 @@ def get_portfolio_data(holdings_csv: str,
             atr_frac    = round(ind_n["atr_frac"], 4),
             bull_regime = ind_n["bull_regime"],
             entry_reason= ind_n["entry_reason"],
+            consec_above_sma200 = ind_n.get("consec_above_sma200", 0),
         ))
     rest_tickers = [s["symbol"] for s in new_signals[top_signals:]]
 
@@ -2297,6 +2315,15 @@ def get_portfolio_data(holdings_csv: str,
     for ind_t in trending_signals:
         _, stop_px, tp_px = _risk_shares(ind_t["close"], ind_t["atr_frac"])
         is_held = ind_t["symbol"] in held_tickers
+        consec = ind_t.get("consec_above_sma200", 0)
+        entry_ok_t = ind_t["entry_ok"]
+        # Build a human-readable note about why it's trending vs fresh signal
+        if entry_ok_t and consec > FRESH_SIGNAL_BARS:
+            trend_note = f"entry conditions met but signal fired ~{consec}d ago — still buyable"
+        elif not ind_t["above_sma50"] and ind_t["above_sma200"]:
+            trend_note = ind_t["entry_reason"].replace("NO ENTRY — ", "")
+        else:
+            trend_note = ind_t["entry_reason"].replace("NO ENTRY — ", "")
         trending_rows.append(dict(
             ticker      = ind_t["symbol"],
             price       = round(ind_t["close"], 2),
@@ -2305,7 +2332,9 @@ def get_portfolio_data(holdings_csv: str,
             rs_vs_spy   = round(ind_t["rs_vs_spy"], 4),
             stop        = round(stop_px, 2),
             is_held     = is_held,
-            reason      = ind_t["entry_reason"].replace("NO ENTRY — ", ""),
+            entry_ok    = entry_ok_t,
+            consec_above_sma200 = consec,
+            reason      = trend_note,
             vix         = round(ind_t["vix"], 1),
             sma200      = round(ind_t["sma200"], 2),
             sma50       = round(ind_t["sma50"], 2),
@@ -2314,6 +2343,7 @@ def get_portfolio_data(holdings_csv: str,
             atr         = round(ind_t["atr"], 2),
             atr_frac    = round(ind_t["atr_frac"], 4),
             bull_regime = ind_t["bull_regime"],
+            entry_gate  = ind_t.get("entry_gate"),
             entry_reason= ind_t["entry_reason"],
         ))
 

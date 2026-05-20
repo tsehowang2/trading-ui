@@ -581,15 +581,17 @@
       </div>
       <div class="col-lg-7">
         <div class="dash-section h-100">
-          <h5><i class="fas fa-signal"></i>New Buy Signals <span id="sigCount" class="dim"></span></h5>
-          <div id="sigContent"></div>
+      <h5><i class="fas fa-signal"></i>New Buy Signals <span id="sigCount" class="dim"></span>
+        <small class="ms-2 dim" style="font-size:.65rem;font-weight:400;text-transform:none;letter-spacing:0;">Fresh breakout (≤5 days above SMA200) · matches backtest entry today</small>
+      </h5>
+      <div id="sigContent"></div>
         </div>
       </div>
     </div>
 
     <div class="dash-section mt-3" id="trendSection" style="display:none">
       <h5><i class="fas fa-fire-alt"></i>Top Trending <span id="trendCount" class="dim"></span>
-        <small class="ms-2 dim" style="font-size:.65rem;font-weight:400;text-transform:none;letter-spacing:0;">Above SMA200 · strong momentum · awaiting fresh entry signal</small>
+        <small class="ms-2 dim" style="font-size:.65rem;font-weight:400;text-transform:none;letter-spacing:0;">Above SMA200 · signal fired &gt;5 days ago or conditions not fully met · still tradeable on pullback</small>
       </h5>
       <div id="trendContent"></div>
     </div>
@@ -807,6 +809,7 @@ function buildTipRows(d) {
   if (d.atr    != null) add('ATR (stop%)', dollar(d.atr) + ' (' + pct(d.atr_frac) + ')');
   if (d.vix    != null) add('VIX', d.vix.toFixed(1));
   add('Regime', bull);
+  if (d.consec_above_sma200 != null) add('Days above SMA200', d.consec_above_sma200 + 'd');
   if (d.cushion!= null) add('Cushion', pct(d.cushion));
   if (d.pnl_pct!= null) add('P&amp;L', `<span class="${d.pnl_pct>=0?'up':'dn'}">${pct(d.pnl_pct)}</span>`);
   if (d.action)     add('Action', `<span style="color:#94a3b8;font-size:.68rem">${d.action}</span>`);
@@ -916,6 +919,7 @@ function render(d, cached) {
           <thead><tr><th>#</th><th>Ticker</th><th class="text-end">Price</th>
             <th class="text-end">Gate</th><th class="text-end">Score</th>
             <th class="text-end">ADX</th><th class="text-end">RS/SPY</th>
+            <th class="text-end">Days▲</th>
             <th class="text-end">Shares</th><th class="text-end">Stop</th>
             <th class="text-end">TP</th></tr></thead>
           <tbody>${d.signals.map((s,i) => `
@@ -927,6 +931,7 @@ function render(d, cached) {
               <td class="text-end">${(s.score*100).toFixed(0)}%</td>
               <td class="text-end">${s.adx14}</td>
               <td class="text-end ${s.rs_vs_spy>=0?'up':'dn'}">${fmtP(s.rs_vs_spy)}</td>
+              <td class="text-end dim" title="Consecutive trading days above SMA200">${s.consec_above_sma200 ?? '\u2014'}</td>
               <td class="text-end">${s.shares != null ? s.shares : (s.is_held ? '<span class="dim" style="font-size:.7rem;">already held</span>' : '\u2014')}</td>
               <td class="text-end dim">${fmtD(s.stop)}</td>
               <td class="text-end up">${fmtD(s.tp)}</td>
@@ -947,10 +952,15 @@ function render(d, cached) {
           <thead><tr>
             <th>#</th><th>Ticker</th><th class="text-end">Price</th>
             <th class="text-end">Score</th><th class="text-end">ADX</th>
-            <th class="text-end">RS/SPY</th><th class="text-end">Stop</th>
-            <th>Why no signal today</th>
+            <th class="text-end">RS/SPY</th><th class="text-end">Days▲</th>
+            <th class="text-end">Stop</th>
+            <th>Status</th>
           </tr></thead>
-          <tbody>${trendRows.map((t,i) => `
+          <tbody>${trendRows.map((t,i) => {
+            const entryBadge = t.entry_ok
+              ? `<span style="color:#f59e0b;font-size:.68rem;" title="Entry conditions STILL met — can buy on pullback to entry zone">⚡ buyable</span>`
+              : `<span class="dim" style="font-size:.68rem;">not yet</span>`;
+            return `
             <tr class="tip-trigger" onmouseenter="showIndTip(event,${i},'trending')" onmouseleave="hideIndTip()">
               <td class="dim">${i+1}</td>
               <td><strong>${t.ticker}</strong>${t.is_held ? '<span class="badge-held">HELD</span>' : ''}</td>
@@ -958,9 +968,10 @@ function render(d, cached) {
               <td class="text-end">${(t.score*100).toFixed(0)}%</td>
               <td class="text-end">${t.adx14}</td>
               <td class="text-end ${t.rs_vs_spy>=0?'up':'dn'}">${fmtP(t.rs_vs_spy)}</td>
+              <td class="text-end dim" title="Trading days above SMA200">${t.consec_above_sma200 ?? '\u2014'}d</td>
               <td class="text-end dim">${fmtD(t.stop)}</td>
-              <td class="dim" style="font-size:.72rem;">${t.reason}</td>
-            </tr>`).join('')}
+              <td style="font-size:.72rem;">${entryBadge} <span class="dim">${t.reason}</span></td>
+            </tr>`;}).join('')}
           </tbody>
         </table>
       </div>`;
