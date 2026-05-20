@@ -484,6 +484,45 @@
         padding: 1.5rem 1.75rem;
     }
 }
+
+/* ── Indicator Tooltip ───────────────────────────────────────────── */
+.ind-tooltip {
+  position: fixed;
+  background: #0e0e14;
+  border: 1px solid #3b82f6;
+  border-radius: 7px;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.71rem;
+  color: #e0e0e0;
+  z-index: 9999;
+  pointer-events: none;
+  min-width: 240px;
+  max-width: 310px;
+  display: none;
+  box-shadow: 0 6px 28px rgba(0,0,0,0.75);
+  font-family: 'JetBrains Mono', monospace;
+}
+.ind-tooltip .tip-title {
+  font-weight: 700;
+  color: #93c5fd;
+  margin-bottom: 0.45rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid #2a2a35;
+  font-size: 0.75rem;
+  letter-spacing: 0.03em;
+}
+.tip-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.11rem 0;
+  border-bottom: 1px solid rgba(42,42,53,0.45);
+  gap: 0.75rem;
+}
+.tip-row:last-child { border-bottom: none; }
+.tip-key { color: #64748b; white-space: nowrap; flex-shrink: 0; }
+.badge-held { background:#0d1a2a;border:1px solid #3b82f6;color:#60a5fa;
+  font-size:.62rem;padding:.1rem .4rem;border-radius:3px;font-weight:700;margin-left:4px; }
+.tip-trigger { cursor: help; }
 </style>
 {% endblock %}
 
@@ -548,10 +587,20 @@
       </div>
     </div>
 
+    <div class="dash-section mt-3" id="trendSection" style="display:none">
+      <h5><i class="fas fa-fire-alt"></i>Top Trending <span id="trendCount" class="dim"></span>
+        <small class="ms-2 dim" style="font-size:.65rem;font-weight:400;text-transform:none;letter-spacing:0;">Above SMA200 · strong momentum · awaiting fresh entry signal</small>
+      </h5>
+      <div id="trendContent"></div>
+    </div>
+
     <div class="dash-section mt-3">
       <h5><i class="fas fa-ban"></i>No Signal <span id="nsCount" class="dim"></span></h5>
       <div id="nsContent" class="ns-grid"></div>
     </div>
+
+    <!-- Floating indicator tooltip -->
+    <div id="indTooltip" class="ind-tooltip"></div>
 
     <div class="dash-section">
       <h5><i class="fas fa-shield-alt"></i>Position Risk Monitor <span id="riskTarget" class="dim"></span></h5>
@@ -714,8 +763,68 @@ function showBanner(msg) {
   setTimeout(() => { b.style.display = 'none'; }, 8000);
 }
 
+// ── Indicator tooltip ───────────────────────────────────────────────────
+// Store indicator data per section so tooltip functions can look them up
+let _tipData = { held:[], signals:[], pyramids:[], trending:[] };
+
+function showIndTip(ev, idx, type) {
+  const t = document.getElementById('indTooltip');
+  const d = _tipData[type] && _tipData[type][idx];
+  if (!d) return;
+  const label = d.ticker || d.symbol || '';
+  t.innerHTML = '<div class="tip-title">' + label + '</div>' + buildTipRows(d);
+  t.style.display = 'block';
+  const tw = 300;
+  let x = ev.clientX + 14;
+  let y = ev.clientY - 20;
+  if (x + tw > window.innerWidth - 8) x = ev.clientX - tw - 14;
+  if (y + 280 > window.innerHeight - 8) y = window.innerHeight - 290;
+  if (y < 5) y = 5;
+  t.style.left = x + 'px';
+  t.style.top  = y + 'px';
+}
+
+function hideIndTip() {
+  document.getElementById('indTooltip').style.display = 'none';
+}
+
+function buildTipRows(d) {
+  const yn = v => v ? '<span style="color:#10b981">✓</span>' : '<span style="color:#ef4444">✗</span>';
+  const bull = d.bull_regime
+    ? '<span style="color:#10b981">█ Bull</span>'
+    : '<span style="color:#f59e0b">□ Neutral/Bear</span>';
+  const pct = v => v != null ? (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%' : '—';
+  const dollar = v => v != null ? '$' + Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : '—';
+  const rows = [];
+  const add = (k, v) => rows.push(`<div class="tip-row"><span class="tip-key">${k}</span><span>${v}</span></div>`);
+  const price = d.price ?? d.current_price;
+  if (price  != null) add('Price', dollar(price));
+  if (d.sma200 != null) add('SMA 200', dollar(d.sma200) + ' ' + yn(d.above_sma200) + ' (' + pct(d.sma200_dist) + ')');
+  if (d.sma50  != null) add('SMA 50',  dollar(d.sma50)  + ' ' + yn(d.above_sma50));
+  if (d.score  != null) add('Score',   (d.score*100).toFixed(0) + '%');
+  if (d.adx14  != null) add('ADX 14',  d.adx14.toFixed(1));
+  if (d.rs_vs_spy != null) add('RS vs SPY 20d', `<span class="${d.rs_vs_spy>=0?'up':'dn'}">${pct(d.rs_vs_spy)}</span>`);
+  if (d.atr    != null) add('ATR (stop%)', dollar(d.atr) + ' (' + pct(d.atr_frac) + ')');
+  if (d.vix    != null) add('VIX', d.vix.toFixed(1));
+  add('Regime', bull);
+  if (d.cushion!= null) add('Cushion', pct(d.cushion));
+  if (d.pnl_pct!= null) add('P&amp;L', `<span class="${d.pnl_pct>=0?'up':'dn'}">${pct(d.pnl_pct)}</span>`);
+  if (d.action)     add('Action', `<span style="color:#94a3b8;font-size:.68rem">${d.action}</span>`);
+  if (d.entry_gate && d.entry_gate !== 'NO SIGNAL') add('Gate', d.entry_gate);
+  if (d.entry_reason) add('Entry signal', `<span style="color:#94a3b8;font-size:.67rem">${d.entry_reason.replace('NO ENTRY — ','')}</span>`);
+  if (d.reason) add('Why no signal', `<span style="color:#94a3b8;font-size:.67rem">${d.reason}</span>`);
+  return rows.join('');
+}
+
 // ── Render ───────────────────────────────────────────────────────────────────
 function render(d, cached) {
+  // Populate tooltip data store for this render
+  _tipData = {
+    held:     d.held     || [],
+    signals:  d.signals  || [],
+    pyramids: d.pyramids || [],
+    trending: d.trending || [],
+  };
   const cacheTime = d._cache_time || d.date;
   $('dashDate').textContent = `Portfolio as of ${d.date}  ·  updated ${cacheTime}`;
   if (cached) { $('cacheLabel').style.display = 'inline'; $('liveLabel').style.display = 'none'; }
@@ -743,7 +852,7 @@ function render(d, cached) {
 
   // ── Held positions ─────────────────────────────────────────────────────
   $('heldCount').textContent = `(${d.held.length})`;
-  document.querySelector('#heldTable tbody').innerHTML = d.held.map(h => {
+  document.querySelector('#heldTable tbody').innerHTML = d.held.map((h, i) => {
     if (h.error) return `<tr><td colspan="14" class="dim">${h.ticker} — data error</td></tr>`;
     const warnHtml = h.warn_conf
       ? `<span class="warn" style="font-size:.7rem;margin-left:4px;">⚠ ${(h.score*100).toFixed(0)}%</span>`
@@ -761,7 +870,7 @@ function render(d, cached) {
       <td class="text-end">${h.score != null ? (h.score*100).toFixed(0)+'%' : '—'}</td>
       <td class="text-end">${h.adx14 ?? '—'}</td>
       <td class="text-end ${h.rs_vs_spy >= 0 ? 'up':'dn'}">${fmtP(h.rs_vs_spy)}</td>
-      <td>${badge(h.action_flag)}${warnHtml}</td>
+      <td class="tip-trigger" onmouseenter="showIndTip(event,${i},'held')" onmouseleave="hideIndTip()">${badge(h.action_flag)}${warnHtml}</td>
       <td>
         <button class="btn-icon" onclick="openEditModal('${h.ticker}',${h.entry_price},${h.shares},'${(h.notes||'').replace(/'/g,"&#39;")}')">✎</button>
         <button class="btn-icon del" onclick="deleteHolding('${h.ticker}')">✕</button>
@@ -779,9 +888,9 @@ function render(d, cached) {
         <table class="dash-table">
           <thead><tr><th>#</th><th>Ticker</th><th class="text-end">P&amp;L</th>
             <th class="text-end">Score</th><th class="text-end">ADX</th>
-            <th class="text-end">RS/SPY</th><th>Action</th></tr></thead>
+            <th class="text-end">RS/SPY</th><th>Action <span class="dim" style="font-size:.62rem;">(hover)</span></th></tr></thead>
           <tbody>${d.pyramids.map((p,i) => `
-            <tr>
+            <tr class="tip-trigger" onmouseenter="showIndTip(event,${i},'pyramids')" onmouseleave="hideIndTip()">
               <td class="dim">${i+1}</td><td><strong>${p.ticker}</strong></td>
               <td class="text-end ${pnlClass(p.pnl_pct)}">${fmtP(p.pnl_pct)}</td>
               <td class="text-end">${(p.score*100).toFixed(0)}%</td>
@@ -810,14 +919,15 @@ function render(d, cached) {
             <th class="text-end">Shares</th><th class="text-end">Stop</th>
             <th class="text-end">TP</th></tr></thead>
           <tbody>${d.signals.map((s,i) => `
-            <tr>
-              <td class="dim">${i+1}</td><td><strong>${s.ticker}</strong></td>
+            <tr class="tip-trigger" onmouseenter="showIndTip(event,${i},'signals')" onmouseleave="hideIndTip()">
+              <td class="dim">${i+1}</td>
+              <td><strong>${s.ticker}</strong>${s.is_held ? '<span class="badge-held">HELD</span>' : ''}</td>
               <td class="text-end">${fmtD(s.price)}</td>
               <td class="text-end dim" style="font-size:.72rem;">${s.gate}</td>
               <td class="text-end">${(s.score*100).toFixed(0)}%</td>
               <td class="text-end">${s.adx14}</td>
               <td class="text-end ${s.rs_vs_spy>=0?'up':'dn'}">${fmtP(s.rs_vs_spy)}</td>
-              <td class="text-end">${s.shares ?? '\u2014'}</td>
+              <td class="text-end">${s.shares != null ? s.shares : (s.is_held ? '<span class="dim" style="font-size:.7rem;">already held</span>' : '\u2014')}</td>
               <td class="text-end dim">${fmtD(s.stop)}</td>
               <td class="text-end up">${fmtD(s.tp)}</td>
             </tr>`).join('')}
@@ -826,7 +936,35 @@ function render(d, cached) {
       </div>
       ${d.rest_tickers && d.rest_tickers.length ? `<div class="mt-3" style="font-size:.76rem;color:#cccccc;">${d.rest_tickers.length} more: ${d.rest_tickers.map(t=>`<span class="ticker-pill">${t}</span>`).join(' ')}</div>` : ''}`;
   }
-
+  // ── Trending (above SMA200, strong, no fresh entry today) ──────────────
+  const trendRows = d.trending || [];
+  $('trendCount').textContent = `(${trendRows.length})`;
+  $('trendSection').style.display = trendRows.length ? '' : 'none';
+  if (trendRows.length) {
+    $('trendContent').innerHTML = `
+      <div class="table-responsive">
+        <table class="dash-table">
+          <thead><tr>
+            <th>#</th><th>Ticker</th><th class="text-end">Price</th>
+            <th class="text-end">Score</th><th class="text-end">ADX</th>
+            <th class="text-end">RS/SPY</th><th class="text-end">Stop</th>
+            <th>Why no signal today</th>
+          </tr></thead>
+          <tbody>${trendRows.map((t,i) => `
+            <tr class="tip-trigger" onmouseenter="showIndTip(event,${i},'trending')" onmouseleave="hideIndTip()">
+              <td class="dim">${i+1}</td>
+              <td><strong>${t.ticker}</strong>${t.is_held ? '<span class="badge-held">HELD</span>' : ''}</td>
+              <td class="text-end">${fmtD(t.price)}</td>
+              <td class="text-end">${(t.score*100).toFixed(0)}%</td>
+              <td class="text-end">${t.adx14}</td>
+              <td class="text-end ${t.rs_vs_spy>=0?'up':'dn'}">${fmtP(t.rs_vs_spy)}</td>
+              <td class="text-end dim">${fmtD(t.stop)}</td>
+              <td class="dim" style="font-size:.72rem;">${t.reason}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
   // ── No signal (always visible) ─────────────────────────────────────────
   $('nsCount').textContent = `(${d.no_signals.length})`;
   $('nsContent').innerHTML = d.no_signals.map(ns => `

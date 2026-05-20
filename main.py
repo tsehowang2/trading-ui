@@ -2164,6 +2164,7 @@ def get_portfolio_data(holdings_csv: str,
             ticker        = ticker,
             entry_price   = entry_price,
             shares        = shares_held,
+            notes         = h.get("notes", ""),
             current_price = round(close, 2),
             pnl_pct       = round(pnl_pct, 4),
             pnl_dollars   = round(pnl_dollars, 2),
@@ -2178,6 +2179,18 @@ def get_portfolio_data(holdings_csv: str,
             rs_vs_spy     = round(ind["rs_vs_spy"], 4),
             warn_conf     = warn,
             error         = False,
+            # Indicator detail for tooltip
+            vix           = round(ind["vix"], 1),
+            sma200        = round(ind["sma200"], 2),
+            sma50         = round(ind["sma50"], 2),
+            above_sma200  = ind["above_sma200"],
+            above_sma50   = ind["above_sma50"],
+            entry_gate    = ind["entry_gate"],
+            entry_reason  = ind["entry_reason"],
+            sma200_dist   = round(ind["sma200_dist"], 4),
+            atr           = round(ind["atr"], 2),
+            atr_frac      = round(ind["atr_frac"], 4),
+            bull_regime   = ind["bull_regime"],
         )
         held_rows.append(row)
 
@@ -2185,25 +2198,28 @@ def get_portfolio_data(holdings_csv: str,
             pyramid_cands.append(dict(ind=ind, row=row))
 
     # ── Watchlist screening ───────────────────────────────────────────────────
-    new_signals: list[dict] = []
-    no_signals:  list[dict] = []
+    new_signals:      list[dict] = []
+    trending_signals: list[dict] = []   # above SMA200 but no fresh entry signal today
+    no_signals:       list[dict] = []
 
     for ticker in watchlist:
         ticker_u = ticker.upper()
-        if ticker_u in held_tickers:
-            continue
+        # Note: held tickers are NOT skipped — shows entry_ok signal even if already owned
         ind = indicators.get(ticker_u)
         if ind is None:
             no_signals.append(dict(ticker=ticker_u, reason="data error"))
             continue
         if ind["entry_ok"]:
             new_signals.append(ind)
+        elif ind["above_sma200"]:
+            trending_signals.append(ind)   # strong trend, signal already passed
         else:
             no_signals.append(dict(ticker=ticker_u,
                                    reason=ind["entry_reason"].replace("NO ENTRY — ", "")))
 
     pyramid_cands.sort(key=lambda x: x["ind"]["score"], reverse=True)
     new_signals.sort(key=lambda x: x["score"], reverse=True)
+    trending_signals.sort(key=lambda x: x["score"], reverse=True)
     all_new       = new_signals
     pyramid_cands = [p for p in pyramid_cands if p["ind"]["score"] >= min_pyramid_confidence]
     new_signals   = [s for s in all_new       if s["score"]        >= min_buy_confidence]
@@ -2221,16 +2237,27 @@ def get_portfolio_data(holdings_csv: str,
         add_cost = add_sh * ind_p["close"]
         feasible = add_sh > 0 and add_cost <= cash_deployable and not low_cash
         pyramid_rows.append(dict(
-            ticker    = ind_p["symbol"],
-            pnl_pct   = pc["row"]["pnl_pct"],
-            score     = round(ind_p["score"], 3),
-            adx14     = round(ind_p["adx14"], 1),
-            rs_vs_spy = round(ind_p["rs_vs_spy"], 4),
-            add_sh    = add_sh,
-            stop_px   = round(stop_px, 2),
-            tp_px     = round(tp_px, 2),
-            add_cost  = round(add_cost, 2),
-            feasible  = feasible,
+            ticker      = ind_p["symbol"],
+            pnl_pct     = pc["row"]["pnl_pct"],
+            score       = round(ind_p["score"], 3),
+            adx14       = round(ind_p["adx14"], 1),
+            rs_vs_spy   = round(ind_p["rs_vs_spy"], 4),
+            add_sh      = add_sh,
+            stop_px     = round(stop_px, 2),
+            tp_px       = round(tp_px, 2),
+            add_cost    = round(add_cost, 2),
+            feasible    = feasible,
+            price       = round(ind_p["close"], 2),
+            vix         = round(ind_p["vix"], 1),
+            sma200      = round(ind_p["sma200"], 2),
+            sma50       = round(ind_p["sma50"], 2),
+            above_sma200= ind_p["above_sma200"],
+            above_sma50 = ind_p["above_sma50"],
+            entry_gate  = ind_p["entry_gate"],
+            sma200_dist = round(ind_p["sma200_dist"], 4),
+            atr         = round(ind_p["atr"], 2),
+            atr_frac    = round(ind_p["atr_frac"], 4),
+            bull_regime = ind_p["bull_regime"],
         ))
 
     # ── Build new signals list ────────────────────────────────────────────────
@@ -2239,19 +2266,56 @@ def get_portfolio_data(holdings_csv: str,
         sh, stop_px, tp_px = _risk_shares(ind_n["close"], ind_n["atr_frac"])
         cost     = sh * ind_n["close"]
         feasible = sh > 0 and cost <= cash_deployable and not low_cash
+        is_held  = ind_n["symbol"] in held_tickers
         signal_rows.append(dict(
-            ticker    = ind_n["symbol"],
-            price     = round(ind_n["close"], 2),
-            gate      = ind_n["entry_gate"],
-            score     = round(ind_n["score"], 3),
-            adx14     = round(ind_n["adx14"], 1),
-            rs_vs_spy = round(ind_n["rs_vs_spy"], 4),
-            shares    = sh if feasible else None,
-            stop      = round(stop_px, 2),
-            tp        = round(tp_px, 2),
-            feasible  = feasible,
+            ticker      = ind_n["symbol"],
+            price       = round(ind_n["close"], 2),
+            gate        = ind_n["entry_gate"],
+            score       = round(ind_n["score"], 3),
+            adx14       = round(ind_n["adx14"], 1),
+            rs_vs_spy   = round(ind_n["rs_vs_spy"], 4),
+            shares      = sh if (feasible and not is_held) else None,
+            stop        = round(stop_px, 2),
+            tp          = round(tp_px, 2),
+            feasible    = feasible,
+            is_held     = is_held,
+            vix         = round(ind_n["vix"], 1),
+            sma200      = round(ind_n["sma200"], 2),
+            sma50       = round(ind_n["sma50"], 2),
+            above_sma200= ind_n["above_sma200"],
+            above_sma50 = ind_n["above_sma50"],
+            sma200_dist = round(ind_n["sma200_dist"], 4),
+            atr         = round(ind_n["atr"], 2),
+            atr_frac    = round(ind_n["atr_frac"], 4),
+            bull_regime = ind_n["bull_regime"],
+            entry_reason= ind_n["entry_reason"],
         ))
     rest_tickers = [s["symbol"] for s in new_signals[top_signals:]]
+
+    # ── Build trending list (above SMA200, strong, but no fresh entry today) ─
+    trending_rows: list[dict] = []
+    for ind_t in trending_signals:
+        _, stop_px, tp_px = _risk_shares(ind_t["close"], ind_t["atr_frac"])
+        is_held = ind_t["symbol"] in held_tickers
+        trending_rows.append(dict(
+            ticker      = ind_t["symbol"],
+            price       = round(ind_t["close"], 2),
+            score       = round(ind_t["score"], 3),
+            adx14       = round(ind_t["adx14"], 1),
+            rs_vs_spy   = round(ind_t["rs_vs_spy"], 4),
+            stop        = round(stop_px, 2),
+            is_held     = is_held,
+            reason      = ind_t["entry_reason"].replace("NO ENTRY — ", ""),
+            vix         = round(ind_t["vix"], 1),
+            sma200      = round(ind_t["sma200"], 2),
+            sma50       = round(ind_t["sma50"], 2),
+            above_sma50 = ind_t["above_sma50"],
+            sma200_dist = round(ind_t["sma200_dist"], 4),
+            atr         = round(ind_t["atr"], 2),
+            atr_frac    = round(ind_t["atr_frac"], 4),
+            bull_regime = ind_t["bull_regime"],
+            entry_reason= ind_t["entry_reason"],
+        ))
 
     # ── Risk monitor ──────────────────────────────────────────────────────────
     risk_rows: list[dict] = []
@@ -2324,6 +2388,7 @@ def get_portfolio_data(holdings_csv: str,
         signals         = signal_rows,
         n_all_signals   = len(new_signals),
         rest_tickers    = rest_tickers,
+        trending        = trending_rows,
         no_signals      = no_signals,
         risk_monitor    = risk_rows,
         total_risk_pct  = round(total_risk_pct, 2),

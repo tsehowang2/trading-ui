@@ -367,8 +367,8 @@ async function saveHoldings() {
   });
   if (res.ok) {
     const isActive = (profiles.find(p=>p.id===editingId)||{}).is_active;
-    showToast(isActive ? 'Holdings saved \u2014 analysis cache cleared' : 'Holdings saved');
-    holdingsData = clean; renderHoldings();
+    showToast(isActive ? 'Holdings saved \u2014 go to Portfolio \u2192 Refresh Live to update analysis' : 'Holdings saved');
+    await loadHoldings(editingId);   // re-fetch from server to confirm state
   }
   else { const d = await res.json(); showToast(d.error || 'Error', true); }
 }
