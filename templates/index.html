@@ -656,14 +656,48 @@ async function saveHolding() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ticker, entry_price, shares, notes })
   });
-  if (resp.ok) { _holdingModal.hide(); showBanner('Holdings updated — click Refresh Live to recalculate.'); loadCached(); }
-  else alert('Error saving holding.');
+  if (resp.ok) {
+    _holdingModal.hide();
+    showBanner('Holding saved. Click \u201cRefresh Live\u201d to update signals & analysis.');
+    await refreshHeldTable();
+  } else alert('Error saving holding.');
 }
 
 async function deleteHolding(ticker) {
   if (!confirm(`Delete ${ticker}?`)) return;
   const resp = await fetch(`/api/holdings?ticker=${ticker}`, { method: 'DELETE' });
-  if (resp.ok) { showBanner('Holdings updated — click Refresh Live to recalculate.'); loadCached(); }
+  if (resp.ok) {
+    showBanner('Holding removed. Click \u201cRefresh Live\u201d to update signals & analysis.');
+    await refreshHeldTable();
+  }
+}
+
+// Refresh just the Held Positions table from raw DB holdings (fast, no analysis required)
+async function refreshHeldTable() {
+  try {
+    const raw = await (await fetch('/api/holdings')).json();
+    $('heldCount').textContent = `(${raw.length})`;
+    if (raw.length === 0) {
+      document.querySelector('#heldTable tbody').innerHTML =
+        `<tr><td colspan="14" class="dim" style="text-align:center;padding:1rem;">No holdings. Add one above.</td></tr>`;
+      return;
+    }
+    document.querySelector('#heldTable tbody').innerHTML = raw.map(h => {
+      const ep = h.entry_price ?? 0;
+      return `<tr>
+        <td><strong>${h.ticker}</strong></td>
+        <td class="text-end dim">$${Number(ep).toFixed(2)}</td>
+        <td class="text-end dim">${h.shares ?? '\u2014'}</td>
+        <td class="text-end dim" colspan="9"><span class="text-muted" style="font-size:0.7rem;">run Refresh Live for live data</span></td>
+        <td>
+          <button class="btn-icon" onclick="openEditModal('${h.ticker}',${ep},${h.shares},'${(h.notes||'').replace(/'/g,"&#39;")}')">\u270e</button>
+          <button class="btn-icon del" onclick="deleteHolding('${h.ticker}')">\u2715</button>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    console.error('refreshHeldTable error:', e);
+  }
 }
 
 function showBanner(msg) {
@@ -741,23 +775,25 @@ function render(d, cached) {
     $('pyrContent').innerHTML = '<p class="dim" style="font-size:.82rem;">No positions meet pyramid criteria.</p>';
   } else {
     $('pyrContent').innerHTML = `
-      <table class="dash-table">
-        <thead><tr><th>#</th><th>Ticker</th><th class="text-end">P&L</th>
-          <th class="text-end">Score</th><th class="text-end">ADX</th>
-          <th class="text-end">RS/SPY</th><th>Action</th></tr></thead>
-        <tbody>${d.pyramids.map((p,i) => `
-          <tr>
-            <td class="dim">${i+1}</td><td><strong>${p.ticker}</strong></td>
-            <td class="text-end ${pnlClass(p.pnl_pct)}">${fmtP(p.pnl_pct)}</td>
-            <td class="text-end">${(p.score*100).toFixed(0)}%</td>
-            <td class="text-end">${p.adx14}</td>
-            <td class="text-end ${p.rs_vs_spy>=0?'up':'dn'}">${fmtP(p.rs_vs_spy)}</td>
-            <td>${p.feasible
-              ? `<span class="up">ADD ${p.add_sh} sh</span> <span class="dim" style="font-size:.72rem;">stop ${fmtD(p.stop_px)} TP ${fmtD(p.tp_px)}</span>`
-              : `<span class="dim" style="font-size:.75rem;">insufficient cash</span>`}</td>
-          </tr>`).join('')}
-        </tbody>
-      </table>`;
+      <div class="table-responsive">
+        <table class="dash-table">
+          <thead><tr><th>#</th><th>Ticker</th><th class="text-end">P&amp;L</th>
+            <th class="text-end">Score</th><th class="text-end">ADX</th>
+            <th class="text-end">RS/SPY</th><th>Action</th></tr></thead>
+          <tbody>${d.pyramids.map((p,i) => `
+            <tr>
+              <td class="dim">${i+1}</td><td><strong>${p.ticker}</strong></td>
+              <td class="text-end ${pnlClass(p.pnl_pct)}">${fmtP(p.pnl_pct)}</td>
+              <td class="text-end">${(p.score*100).toFixed(0)}%</td>
+              <td class="text-end">${p.adx14}</td>
+              <td class="text-end ${p.rs_vs_spy>=0?'up':'dn'}">${fmtP(p.rs_vs_spy)}</td>
+              <td>${p.feasible
+                ? `<span class="up">ADD ${p.add_sh} sh</span> <span class="dim" style="font-size:.72rem;">stop ${fmtD(p.stop_px)} TP ${fmtD(p.tp_px)}</span>`
+                : `<span class="dim" style="font-size:.75rem;">insufficient cash</span>`}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
   }
 
   // ── New signals ────────────────────────────────────────────────────────
@@ -766,26 +802,28 @@ function render(d, cached) {
     $('sigContent').innerHTML = '<p class="dim" style="font-size:.82rem;">No signals above confidence threshold.</p>';
   } else {
     $('sigContent').innerHTML = `
-      <table class="dash-table">
-        <thead><tr><th>#</th><th>Ticker</th><th class="text-end">Price</th>
-          <th class="text-end">Gate</th><th class="text-end">Score</th>
-          <th class="text-end">ADX</th><th class="text-end">RS/SPY</th>
-          <th class="text-end">Shares</th><th class="text-end">Stop</th>
-          <th class="text-end">TP</th></tr></thead>
-        <tbody>${d.signals.map((s,i) => `
-          <tr>
-            <td class="dim">${i+1}</td><td><strong>${s.ticker}</strong></td>
-            <td class="text-end">${fmtD(s.price)}</td>
-            <td class="text-end dim" style="font-size:.72rem;">${s.gate}</td>
-            <td class="text-end">${(s.score*100).toFixed(0)}%</td>
-            <td class="text-end">${s.adx14}</td>
-            <td class="text-end ${s.rs_vs_spy>=0?'up':'dn'}">${fmtP(s.rs_vs_spy)}</td>
-            <td class="text-end">${s.shares ?? '—'}</td>
-            <td class="text-end dim">${fmtD(s.stop)}</td>
-            <td class="text-end up">${fmtD(s.tp)}</td>
-          </tr>`).join('')}
-        </tbody>
-      </table>
+      <div class="table-responsive">
+        <table class="dash-table">
+          <thead><tr><th>#</th><th>Ticker</th><th class="text-end">Price</th>
+            <th class="text-end">Gate</th><th class="text-end">Score</th>
+            <th class="text-end">ADX</th><th class="text-end">RS/SPY</th>
+            <th class="text-end">Shares</th><th class="text-end">Stop</th>
+            <th class="text-end">TP</th></tr></thead>
+          <tbody>${d.signals.map((s,i) => `
+            <tr>
+              <td class="dim">${i+1}</td><td><strong>${s.ticker}</strong></td>
+              <td class="text-end">${fmtD(s.price)}</td>
+              <td class="text-end dim" style="font-size:.72rem;">${s.gate}</td>
+              <td class="text-end">${(s.score*100).toFixed(0)}%</td>
+              <td class="text-end">${s.adx14}</td>
+              <td class="text-end ${s.rs_vs_spy>=0?'up':'dn'}">${fmtP(s.rs_vs_spy)}</td>
+              <td class="text-end">${s.shares ?? '\u2014'}</td>
+              <td class="text-end dim">${fmtD(s.stop)}</td>
+              <td class="text-end up">${fmtD(s.tp)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
       ${d.rest_tickers && d.rest_tickers.length ? `<div class="mt-3" style="font-size:.76rem;color:#cccccc;">${d.rest_tickers.length} more: ${d.rest_tickers.map(t=>`<span class="ticker-pill">${t}</span>`).join(' ')}</div>` : ''}`;
   }
 

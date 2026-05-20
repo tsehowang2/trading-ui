@@ -60,10 +60,11 @@
       <div id="profileList"></div>
       <div class="mt-3 d-flex gap-2">
         <input id="newProfileName" class="input-dark flex-1" placeholder="New profile name…" style="flex:1">
-        <button class="btn btn-sm btn-outline-success" onclick="createProfile()">
+        <button class="btn btn-sm btn-outline-success" onclick="createProfile()" title="Create profile (watchlist auto-imported from config.toml)">
           <i class="fas fa-plus"></i>
         </button>
       </div>
+      <p class="mt-2" style="font-size:0.65rem;color:#64748b;">New profiles auto-import watchlist from config.toml.</p>
     </div>
   </div>
 
@@ -123,10 +124,13 @@
     <div class="settings-section">
       <h5><i class="fas fa-binoculars me-2"></i>Watchlist</h5>
       <div id="watchlistChips" class="mb-2"></div>
-      <div class="d-flex gap-2 mt-2">
+      <div class="d-flex gap-2 mt-2 flex-wrap">
         <input id="wlInput" class="input-dark" placeholder="TICKER" style="max-width:140px;text-transform:uppercase">
         <button class="btn btn-sm btn-outline-primary" onclick="addTicker()">
           <i class="fas fa-plus me-1"></i>Add
+        </button>
+        <button class="btn btn-sm btn-outline-secondary" onclick="importFromConfig()" title="Replace watchlist with tickers from config.toml">
+          <i class="fas fa-file-import me-1"></i>Import from config.toml
         </button>
         <button class="btn btn-sm btn-outline-success ms-auto" onclick="saveWatchlist()">
           <i class="fas fa-save me-1"></i>Save Watchlist
@@ -181,7 +185,7 @@ function renderProfileList() {
     <div class="profile-card ${p.id === editingId ? 'active' : ''}" onclick="selectProfile(${p.id})">
       <span class="profile-name">${esc(p.name)}</span>
       ${p.is_active ? '<span class="badge-active">ACTIVE</span>' : ''}
-      ${!p.is_active ? `<button class="btn-icon" title="Set active" onclick="event.stopPropagation();setActive(${p.id})"><i class="fas fa-check"></i></button>` : ''}
+      ${p.id === editingId && !p.is_active ? `<button class="btn-icon" title="Set as active profile" onclick="event.stopPropagation();setActive(${p.id})"><i class="fas fa-check"></i></button>` : ''}
     </div>
   `).join('');
 }
@@ -224,13 +228,33 @@ document.getElementById('wlInput').addEventListener('keydown', e => { if(e.key==
 
 function removeTicker(i) { watchlist.splice(i,1); renderWatchlist(); }
 
+async function importFromConfig() {
+  try {
+    const res = await fetch('/api/config/watchlist');
+    const d = await res.json();
+    const incoming = d.watchlist || [];
+    if (!incoming.length) { showToast('config.toml has no watchlist tickers', true); return; }
+    // Merge: add any not already present
+    let added = 0;
+    incoming.forEach(t => { if (!watchlist.includes(t)) { watchlist.push(t); added++; } });
+    renderWatchlist();
+    showToast(added > 0 ? `Imported ${added} ticker(s) from config.toml` : 'All config tickers already in watchlist');
+  } catch(e) {
+    showToast('Failed to read config.toml: ' + e.message, true);
+  }
+}
+
 async function saveWatchlist() {
   const res = await fetch(`/api/profiles/${editingId}`, {
     method:'PUT', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({watchlist})
   });
   const d = await res.json();
-  if (res.ok) { showToast('Watchlist saved'); await loadProfiles(); selectProfile(editingId); }
+  if (res.ok) {
+    const isActive = (profiles.find(p=>p.id===editingId)||{}).is_active;
+    showToast(isActive ? 'Watchlist saved \u2014 analysis cache cleared' : 'Watchlist saved');
+    await loadProfiles(); selectProfile(editingId);
+  }
   else showToast(d.error || 'Error', true);
 }
 
@@ -248,7 +272,11 @@ async function saveParams() {
   const res = await fetch(`/api/profiles/${editingId}`, {
     method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
   });
-  if (res.ok) { showToast('Parameters saved'); await loadProfiles(); }
+  if (res.ok) {
+    const isActive = (profiles.find(p=>p.id===editingId)||{}).is_active;
+    showToast(isActive ? 'Parameters saved \u2014 analysis cache cleared' : 'Parameters saved');
+    await loadProfiles();
+  }
   else { const d = await res.json(); showToast(d.error || 'Error', true); }
 }
 
@@ -257,7 +285,15 @@ async function setActive(id) {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({profile_id: id})
   });
-  if (res.ok) { showToast('Active profile changed'); await loadProfiles(); selectProfile(editingId); }
+  if (res.ok) {
+    showToast('Active profile changed \u2014 analysis cache cleared');
+    await loadProfiles();
+    selectProfile(editingId);
+    // Update topbar profile indicator
+    const el = document.getElementById('topbar-profile');
+    const p = profiles.find(x => x.id === id);
+    if (el && p) el.textContent = '\u25CF ' + p.name;
+  }
 }
 
 async function createProfile() {
@@ -329,7 +365,11 @@ async function saveHoldings() {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({_bulk: true, holdings: clean})
   });
-  if (res.ok) { showToast('Holdings saved'); holdingsData = clean; renderHoldings(); }
+  if (res.ok) {
+    const isActive = (profiles.find(p=>p.id===editingId)||{}).is_active;
+    showToast(isActive ? 'Holdings saved \u2014 analysis cache cleared' : 'Holdings saved');
+    holdingsData = clean; renderHoldings();
+  }
   else { const d = await res.json(); showToast(d.error || 'Error', true); }
 }
 

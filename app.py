@@ -34,6 +34,40 @@ def _write_holdings_json(rows: list[dict], profile_id: int | None = None) -> Non
     """Persist holdings for the given (or active) profile."""
     pid = profile_id if profile_id is not None else _get_active_profile_id()
     db.write_holdings_for_profile(pid, rows)
+    _invalidate_portfolio_cache()
+
+def _invalidate_portfolio_cache() -> None:
+    """Clear cached portfolio analysis so next load forces a re-run."""
+    # Remove JSON cache file
+    try:
+        if os.path.exists(CACHE_PATH):
+            os.remove(CACHE_PATH)
+    except Exception:
+        pass
+    # Remove PostgreSQL cache row
+    if db.DATABASE_URL:
+        try:
+            conn = db.get_connection()
+            if conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM portfolio_cache WHERE id = 1")
+                conn.commit()
+                conn.close()
+        except Exception:
+            pass
+
+def _read_config_watchlist() -> list:
+    """Read watchlist from config.toml, returning [] on failure."""
+    try:
+        import tomllib
+        config_path = os.path.join(_HERE, "config.toml")
+        if os.path.exists(config_path):
+            with open(config_path, "rb") as f:
+                cfg = tomllib.load(f)
+            return cfg.get("portfolio", {}).get("watchlist", [])
+    except Exception:
+        pass
+    return []
 
 def safe_round(value, default=0.0):
     if value is None or not isinstance(value, (int, float)) or not math.isfinite(value):
@@ -111,6 +145,7 @@ def api_holdings():
         ticker = request.args.get('ticker', '').upper()
         pid = _get_active_profile_id()
         db.delete_holding_for_profile(pid, ticker)
+        _invalidate_portfolio_cache()
         return jsonify({"status": "success"})
 
 @app.route('/api/backtest/<ticker>')
@@ -258,17 +293,21 @@ def api_backtest(ticker):
 
 @app.route('/api/watchlist')
 def api_watchlist():
+    """Return active profile's watchlist (falls back to config.toml)."""
     try:
-        import tomllib
-        config_path = os.path.join(_HERE, "config.toml")
-        if os.path.exists(config_path):
-            with open(config_path, "rb") as f:
-                cfg = tomllib.load(f)
-            watchlist = cfg.get("portfolio", {}).get("watchlist", [])
-            return jsonify({"watchlist": watchlist})
-        return jsonify({"watchlist": []})
+        profile = db.get_active_profile()
+        wl = profile.get("watchlist") or []
+        if wl:
+            return jsonify({"watchlist": wl})
+        # Fallback to config.toml if profile has no watchlist yet
+        return jsonify({"watchlist": _read_config_watchlist()})
     except Exception as e:
         return jsonify({"watchlist": [], "error": str(e)})
+
+@app.route('/api/config/watchlist')
+def api_config_watchlist():
+    """Return the raw watchlist from config.toml (used for import in Settings)."""
+    return jsonify({"watchlist": _read_config_watchlist()})
 
 
 # ── Debug endpoint ──
@@ -408,6 +447,9 @@ def api_profiles():
     if existing:
         return jsonify({"error": "A profile with that name already exists"}), 409
     settings = {k: data[k] for k in db.DEFAULT_PROFILE_SETTINGS if k in data}
+    # Auto-seed watchlist from config.toml if none provided
+    if 'watchlist' not in settings or not settings['watchlist']:
+        settings['watchlist'] = _read_config_watchlist()
     profile = db.create_profile(name, settings)
     if profile is None:
         return jsonify({"error": "Failed to create profile"}), 500
@@ -425,6 +467,8 @@ def api_profiles_active():
         return jsonify({"error": "profile_id required"}), 400
     if not db.set_active_profile(int(pid)):
         return jsonify({"error": "Failed to set active profile"}), 500
+    # Invalidate cache — new profile has different holdings / settings
+    _invalidate_portfolio_cache()
     return jsonify({"status": "ok", "active_profile_id": int(pid)})
 
 
@@ -434,6 +478,9 @@ def api_profile_detail(profile_id):
         data = request.json or {}
         if not db.update_profile(profile_id, data):
             return jsonify({"error": "Update failed"}), 500
+        # Invalidate cache if the active profile's settings changed
+        if profile_id == _get_active_profile_id():
+            _invalidate_portfolio_cache()
         return jsonify({"status": "ok"})
     # DELETE
     if len(db.list_profiles()) <= 1:
@@ -453,6 +500,9 @@ def api_profile_holdings(profile_id):
         if data.get('_bulk'):
             rows = data.get('holdings', [])
             db.write_holdings_for_profile(profile_id, rows)
+            # Invalidate cache only if this is the active profile's holdings
+            if profile_id == _get_active_profile_id():
+                _invalidate_portfolio_cache()
             return jsonify({"status": "ok"})
         ticker = str(data.get('ticker', '')).strip().upper()
         if not ticker:
@@ -471,10 +521,14 @@ def api_profile_holdings(profile_id):
                 notes=str(data.get('notes', '')),
             ))
         db.write_holdings_for_profile(profile_id, holdings)
+        if profile_id == _get_active_profile_id():
+            _invalidate_portfolio_cache()
         return jsonify({"status": "ok"})
     # DELETE
     ticker = request.args.get('ticker', '').upper()
     db.delete_holding_for_profile(profile_id, ticker)
+    if profile_id == _get_active_profile_id():
+        _invalidate_portfolio_cache()
     return jsonify({"status": "ok"})
 
 
