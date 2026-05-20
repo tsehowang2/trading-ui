@@ -21,18 +21,33 @@ app.secret_key = "your-secret-key"
 HOLDINGS_PATH  = os.path.join(_HERE, "holdings.json")
 CACHE_PATH     = os.path.join(_HERE, "results", "portfolio_cache.json")
 
-# ── Profile-aware holdings helpers ───────────────────────────────────────────
-def _get_active_profile_id() -> int:
-    return db.get_active_profile_id()
+# ── Profile resolution (per-request, not global) ─────────────────────────────
+def _resolve_profile_id() -> int:
+    """
+    Read profile_id from the request (query string or JSON body).
+    Falls back to the DB-stored default only if not supplied by the client.
+    Each browser session passes its own profile_id so multiple users can
+    view different profiles simultaneously.
+    """
+    pid = request.args.get('profile_id', type=int)
+    if pid is None:
+        try:
+            body = request.get_json(silent=True) or {}
+            raw = body.get('profile_id')
+            if raw is not None:
+                pid = int(raw)
+        except Exception:
+            pass
+    return pid if pid is not None else db.get_active_profile_id()
 
 def _read_holdings_json(profile_id: int | None = None) -> list[dict]:
-    """Return raw holdings for the given (or active) profile."""
-    pid = profile_id if profile_id is not None else _get_active_profile_id()
+    """Return raw holdings for the given profile (or resolve from request)."""
+    pid = profile_id if profile_id is not None else _resolve_profile_id()
     return db.read_holdings_for_profile(pid)
 
 def _write_holdings_json(rows: list[dict], profile_id: int | None = None) -> None:
-    """Persist holdings for the given (or active) profile."""
-    pid = profile_id if profile_id is not None else _get_active_profile_id()
+    """Persist holdings for the given profile (or resolve from request)."""
+    pid = profile_id if profile_id is not None else _resolve_profile_id()
     db.write_holdings_for_profile(pid, rows)
     _invalidate_portfolio_cache()
 
@@ -119,14 +134,15 @@ def index():
 
 @app.route('/api/holdings', methods=['GET', 'POST', 'DELETE'])
 def api_holdings():
+    pid = _resolve_profile_id()
     if request.method == 'GET':
-        holdings = _read_holdings_json()
-        print(f"[API] GET /api/holdings → returning {len(holdings)} holdings")
+        holdings = db.read_holdings_for_profile(pid)
+        print(f"[API] GET /api/holdings (profile {pid}) → {len(holdings)} holdings")
         return jsonify(holdings)
     elif request.method == 'POST':
-        data     = request.json
+        data     = request.json or {}
         ticker   = str(data.get('ticker', '')).strip().upper()
-        holdings = _read_holdings_json()
+        holdings = db.read_holdings_for_profile(pid)
         existing = next((h for h in holdings if h['ticker'] == ticker), None)
         if existing:
             existing['entry_price'] = float(data.get('entry_price', existing['entry_price']))
@@ -139,13 +155,11 @@ def api_holdings():
                 shares      = float(data.get('shares', 0)),
                 notes       = str(data.get('notes', '')),
             ))
-        _write_holdings_json(holdings)
+        db.write_holdings_for_profile(pid, holdings)
         return jsonify({"status": "success"})
     elif request.method == 'DELETE':
         ticker = request.args.get('ticker', '').upper()
-        pid = _get_active_profile_id()
         db.delete_holding_for_profile(pid, ticker)
-        _invalidate_portfolio_cache()
         return jsonify({"status": "success"})
 
 @app.route('/api/backtest/<ticker>')
@@ -293,13 +307,14 @@ def api_backtest(ticker):
 
 @app.route('/api/watchlist')
 def api_watchlist():
-    """Return active profile's watchlist (falls back to config.toml)."""
+    """Return the requesting profile's watchlist (falls back to config.toml)."""
     try:
-        profile = db.get_active_profile()
-        wl = profile.get("watchlist") or []
+        pid = _resolve_profile_id()
+        profiles = db.list_profiles()
+        profile = next((p for p in profiles if p["id"] == pid), None)
+        wl = (profile or {}).get("watchlist") or []
         if wl:
             return jsonify({"watchlist": wl})
-        # Fallback to config.toml if profile has no watchlist yet
         return jsonify({"watchlist": _read_config_watchlist()})
     except Exception as e:
         return jsonify({"watchlist": [], "error": str(e)})
@@ -338,20 +353,33 @@ def dashboard():
 
 @app.route('/api/dashboard/cached')
 def api_dashboard_cached():
-    """Return the last cached portfolio analysis result (instant, no recompute)."""
+    """Return the last cached portfolio analysis result (instant, no recompute).
+    Only returns the cache if it was computed for the same profile_id the client requests.
+    """
+    pid = _resolve_profile_id()
+
+    def _cache_matches(data: dict) -> bool:
+        return data.get("_profile_id") == pid
+
     # Try PostgreSQL first
     if db.DATABASE_URL:
         cache_data = db.read_portfolio_cache_db()
-        if cache_data:
+        if cache_data and _cache_matches(cache_data):
             return jsonify({"success": True, "cached": True, "data": cache_data})
-    
+        if cache_data and not _cache_matches(cache_data):
+            return jsonify({"success": False, "cached": False,
+                            "error": "No cache for this profile — click Refresh."})
+
     # Fallback to JSON file
     if not os.path.exists(CACHE_PATH):
         return jsonify({"success": False, "cached": False, "error": "No cache yet — click Refresh to run analysis."})
-    
+
     try:
         with open(CACHE_PATH, encoding="utf-8") as f:
             data = json.load(f)
+        if not _cache_matches(data):
+            return jsonify({"success": False, "cached": False,
+                            "error": "No cache for this profile — click Refresh."})
         mtime = os.path.getmtime(CACHE_PATH)
         data["_cache_time"] = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
         return jsonify({"success": True, "cached": True, "data": data})
@@ -364,9 +392,9 @@ def api_dashboard_cached():
 def api_dashboard():
     """Run a live portfolio analysis (slow), write cache, return result."""
     try:
-        # Load settings from active profile (DB or JSON), not config.toml
-        profile = db.get_active_profile()
-        pid     = profile["id"]
+        pid     = _resolve_profile_id()
+        profile = db.list_profiles()
+        profile = next((p for p in profile if p["id"] == pid), None) or db.get_active_profile()
 
         # Sync active-profile holdings to a temp JSON file (main.py reads from file)
         holdings_from_profile = db.read_holdings_for_profile(pid)

@@ -138,29 +138,6 @@
       </div>
     </div>
 
-    <!-- Holdings -->
-    <div class="settings-section">
-      <h5><i class="fas fa-briefcase me-2"></i>Holdings</h5>
-      <div class="table-responsive">
-        <table class="holdings-table">
-          <thead>
-            <tr>
-              <th>Ticker</th><th>Entry Price</th><th>Shares</th><th>Notes</th><th></th>
-            </tr>
-          </thead>
-          <tbody id="holdingsBody"></tbody>
-        </table>
-      </div>
-      <div class="d-flex gap-2 mt-3 flex-wrap">
-        <button class="btn btn-sm btn-outline-primary" onclick="addHoldingRow()">
-          <i class="fas fa-plus me-1"></i>Add Row
-        </button>
-        <button class="btn btn-sm btn-outline-success ms-auto" onclick="saveHoldings()">
-          <i class="fas fa-save me-1"></i>Save Holdings
-        </button>
-      </div>
-    </div>
-
   </div><!-- /editorPanel -->
 </div><!-- /row -->
 </div>
@@ -184,8 +161,6 @@ function renderProfileList() {
   el.innerHTML = profiles.map(p => `
     <div class="profile-card ${p.id === editingId ? 'active' : ''}" onclick="selectProfile(${p.id})">
       <span class="profile-name">${esc(p.name)}</span>
-      ${p.is_active ? '<span class="badge-active">ACTIVE</span>' : ''}
-      ${p.id === editingId && !p.is_active ? `<button class="btn-icon" title="Set as active profile" onclick="event.stopPropagation();setActive(${p.id})"><i class="fas fa-check"></i></button>` : ''}
     </div>
   `).join('');
 }
@@ -207,7 +182,6 @@ function selectProfile(id) {
   document.getElementById('fMinPyr').value     = p.min_pyramid_confidence;
   watchlist = [...(p.watchlist || [])];
   renderWatchlist();
-  loadHoldings(id);
 }
 
 function renderWatchlist() {
@@ -281,19 +255,12 @@ async function saveParams() {
 }
 
 async function setActive(id) {
-  const res = await fetch('/api/profiles/active', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({profile_id: id})
-  });
-  if (res.ok) {
-    showToast('Active profile changed \u2014 analysis cache cleared');
-    await loadProfiles();
-    selectProfile(editingId);
-    // Update topbar profile indicator
-    const el = document.getElementById('topbar-profile');
-    const p = profiles.find(x => x.id === id);
-    if (el && p) el.textContent = '\u25CF ' + p.name;
-  }
+  // Active profile is per-browser-session; store in localStorage only
+  localStorage.setItem('tradingUiProfileId', id);
+  const el = document.getElementById('topbar-profile');
+  const p = profiles.find(x => x.id === id);
+  if (el && p) el.textContent = '\u25CF ' + p.name;
+  showToast('Active profile changed — refresh Portfolio page to see effect');
 }
 
 async function createProfile() {
@@ -318,59 +285,6 @@ async function deleteCurrentProfile() {
     if (profiles.length > 0) selectProfile(profiles[0].id);
     else document.getElementById('editorPanel').style.display = 'none';
   }
-}
-
-// ── Holdings ──────────────────────────────────────────────────────────────────
-let holdingsData = [];
-
-async function loadHoldings(profileId) {
-  const res = await fetch(`/api/profiles/${profileId}/holdings`);
-  holdingsData = await res.json();
-  renderHoldings();
-}
-
-function renderHoldings() {
-  const tbody = document.getElementById('holdingsBody');
-  tbody.innerHTML = holdingsData.map((h, i) => `
-    <tr>
-      <td><input class="holding-input" data-i="${i}" data-f="ticker" value="${esc(h.ticker)}" style="width:80px;text-transform:uppercase"></td>
-      <td><input class="holding-input" type="number" data-i="${i}" data-f="entry_price" value="${h.entry_price}" step="0.01" min="0" style="width:90px"></td>
-      <td><input class="holding-input" type="number" data-i="${i}" data-f="shares" value="${h.shares}" step="0.01" min="0" style="width:80px"></td>
-      <td><input class="holding-input" data-i="${i}" data-f="notes" value="${esc(h.notes||'')}" style="width:160px"></td>
-      <td><button class="btn-icon" onclick="removeHolding(${i})"><i class="fas fa-trash-alt"></i></button></td>
-    </tr>
-  `).join('');
-  // Live-edit updates
-  tbody.querySelectorAll('.holding-input').forEach(inp => {
-    inp.addEventListener('input', () => {
-      const i = +inp.dataset.i, f = inp.dataset.f;
-      holdingsData[i][f] = (f === 'ticker') ? inp.value.toUpperCase() : (f === 'notes' ? inp.value : parseFloat(inp.value) || 0);
-    });
-  });
-}
-
-function addHoldingRow() {
-  holdingsData.push({ticker:'', entry_price:0, shares:0, notes:''});
-  renderHoldings();
-  // Focus the last ticker input
-  const inputs = document.querySelectorAll('#holdingsBody input[data-f="ticker"]');
-  if (inputs.length) inputs[inputs.length-1].focus();
-}
-
-function removeHolding(i) { holdingsData.splice(i,1); renderHoldings(); }
-
-async function saveHoldings() {
-  const clean = holdingsData.filter(h => h.ticker && h.ticker.trim());
-  const res = await fetch(`/api/profiles/${editingId}/holdings`, {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({_bulk: true, holdings: clean})
-  });
-  if (res.ok) {
-    const isActive = (profiles.find(p=>p.id===editingId)||{}).is_active;
-    showToast(isActive ? 'Holdings saved \u2014 go to Portfolio \u2192 Refresh Live to update analysis' : 'Holdings saved');
-    await loadHoldings(editingId);   // re-fetch from server to confirm state
-  }
-  else { const d = await res.json(); showToast(d.error || 'Error', true); }
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────

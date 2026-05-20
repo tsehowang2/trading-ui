@@ -536,9 +536,14 @@
       <span id="cacheLabel" style="display:none;" class="cache-badge" style="background:#1a2a1a;border:1px solid #2d5a27;color:#6ee36e;">CACHED</span>
       <span id="liveLabel"  style="display:none;" class="cache-badge" style="background:#1a1a2a;border:1px solid #2d3d5a;color:#6ea8fe;">LIVE</span>
     </div>
-    <button id="refreshBtn" class="btn btn-sm btn-outline-success">
-      <i class="fas fa-sync-alt me-1"></i><span class="d-none d-sm-inline"> Refresh Live</span><span class="d-inline d-sm-none">Refresh</span>
-    </button>
+    <div class="d-flex align-items-center gap-2">
+      <select id="profileSelect" class="form-select form-select-sm"
+              style="background:#14141a;border:1px solid #2a2a35;color:#e0e0e0;font-size:0.75rem;min-width:120px;max-width:180px;"
+              onchange="onProfileChange()"></select>
+      <button id="refreshBtn" class="btn btn-sm btn-outline-success">
+        <i class="fas fa-sync-alt me-1"></i><span class="d-none d-sm-inline"> Refresh Live</span><span class="d-inline d-sm-none">Refresh</span>
+      </button>
+    </div>
   </div>
 
   <div id="lowCashAlert" class="info-bar">
@@ -674,7 +679,7 @@ document.addEventListener('DOMContentLoaded', () => {
   _holdingModal = new bootstrap.Modal($('holdingModal'));
   $('saveHoldingBtn').addEventListener('click', saveHolding);
   $('refreshBtn').addEventListener('click', loadLive);
-  loadCached();
+  initProfiles().then(() => loadCached());
 });
 
 function openAddModal() {
@@ -702,7 +707,8 @@ async function saveHolding() {
   const shares = parseFloat($('hShares').value);
   const notes = $('hNotes').value.trim();
   if (!ticker || isNaN(entry_price) || isNaN(shares)) { alert('Fill all required fields.'); return; }
-  const resp = await fetch('/api/holdings', {
+  const pid = getProfileId();
+  const resp = await fetch(`/api/holdings?profile_id=${pid}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ticker, entry_price, shares, notes })
@@ -716,7 +722,8 @@ async function saveHolding() {
 
 async function deleteHolding(ticker) {
   if (!confirm(`Delete ${ticker}?`)) return;
-  const resp = await fetch(`/api/holdings?ticker=${ticker}`, { method: 'DELETE' });
+  const pid = getProfileId();
+  const resp = await fetch(`/api/holdings?ticker=${ticker}&profile_id=${pid}`, { method: 'DELETE' });
   if (resp.ok) {
     showBanner('Holding removed. Click \u201cRefresh Live\u201d to update signals & analysis.');
     await refreshHeldTable();
@@ -726,7 +733,8 @@ async function deleteHolding(ticker) {
 // Refresh just the Held Positions table from raw DB holdings (fast, no analysis required)
 async function refreshHeldTable() {
   try {
-    const raw = await (await fetch('/api/holdings')).json();
+    const pid = getProfileId();
+    const raw = await (await fetch(`/api/holdings?profile_id=${pid}`)).json();
     $('heldCount').textContent = `(${raw.length})`;
     if (raw.length === 0) {
       document.querySelector('#heldTable tbody').innerHTML =
@@ -1037,8 +1045,9 @@ async function loadCached() {
   $('loader').style.display      = 'flex';
   $('dashContent').style.display = 'none';
   $('lowCashAlert').classList.remove('show');
+  const pid = getProfileId();
   try {
-    const json = await (await fetch('/api/dashboard/cached')).json();
+    const json = await (await fetch(`/api/dashboard/cached?profile_id=${pid || ''}`)).json();
     if (json.success) render(json.data, true);
     else $('loader').innerHTML = `
       <i class="fas fa-database" style="font-size:2rem;color:#cccccc;"></i>
@@ -1057,8 +1066,9 @@ async function loadLive() {
   $('dashContent').style.display = 'none';
   $('refreshBtn').disabled = true;
   $('refreshBtn').innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Running…';
+  const pid = getProfileId();
   try {
-    const json = await (await fetch('/api/dashboard/refresh')).json();
+    const json = await (await fetch(`/api/dashboard/refresh?profile_id=${pid || ''}`)).json();
     if (!json.success) throw new Error(json.error);
     render(json.data, false);
   } catch(e) {

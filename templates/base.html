@@ -106,14 +106,24 @@
         });
     })();
 
-    // Show active profile name in topbar
+    // Show active profile name in topbar (from localStorage, set by index.html)
     (function() {
         const el = document.getElementById('topbar-profile');
         if (!el) return;
-        fetch('/api/profiles/active')
-            .then(r => r.json())
-            .then(p => { if (p && p.name) el.textContent = '\u25CF ' + p.name; })
-            .catch(() => {});
+        function updateFromStorage() {
+            const pid = localStorage.getItem('tradingUiProfileId');
+            if (!pid) return;
+            fetch('/api/profiles')
+                .then(r => r.json())
+                .then(profiles => {
+                    const p = profiles.find(x => String(x.id) === String(pid));
+                    if (p) el.textContent = '\u25CF ' + p.name;
+                })
+                .catch(() => {});
+        }
+        updateFromStorage();
+        // Keep in sync if another tab changes localStorage
+        window.addEventListener('storage', updateFromStorage);
     })();
     </script>
     {% block scripts %}{% endblock %}
