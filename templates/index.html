@@ -485,7 +485,41 @@
     }
 }
 
-/* ── Indicator Tooltip ───────────────────────────────────────────── */
+/* Profile dropdown panel */
+.profile-dropdown-wrap { position: relative; }
+.profile-btn {
+  background: #14141a; border: 1px solid #2a2a35; color: #e0e0e0;
+  border-radius: 5px; padding: 0.3rem 0.7rem; font-size: 0.78rem;
+  cursor: pointer; display: flex; align-items: center; gap: 0.5rem;
+  white-space: nowrap; transition: border-color .15s;
+}
+.profile-btn:hover { border-color: #3b82f6; }
+.profile-panel {
+  display: none; position: absolute; top: calc(100% + 6px); right: 0;
+  background: #1a1a1f; border: 1px solid #2a2a35; border-radius: 8px;
+  padding: 0.5rem; min-width: 200px; z-index: 2000;
+  box-shadow: 0 8px 32px rgba(0,0,0,.6);
+}
+.profile-panel.open { display: block; }
+.pp-card {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.45rem 0.6rem; border-radius: 5px; margin-bottom: 0.25rem;
+  cursor: default;
+}
+.pp-card:last-child { margin-bottom: 0; }
+.pp-card.current { background: #14141a; border: 1px solid #10b981; }
+.pp-card:not(.current) { background: #14141a; border: 1px solid #2a2a35; }
+.pp-card .pp-name { flex: 1; font-size: 0.8rem; color: #e0e0e0; }
+.pp-active-badge {
+  background: #0d2918; color: #10b981; border: 1px solid #10b981;
+  font-size: 0.6rem; padding: 0.1rem 0.4rem; border-radius: 3px; font-weight: 700;
+}
+.pp-use-btn {
+  background: transparent; border: 1px solid #3b82f6; color: #60a5fa;
+  border-radius: 4px; font-size: 0.68rem; padding: 0.15rem 0.5rem; cursor: pointer;
+  transition: all .15s;
+}
+.pp-use-btn:hover { background: #1e3a5f; }
 .ind-tooltip {
   position: fixed;
   background: #0e0e14;
@@ -537,9 +571,15 @@
       <span id="liveLabel"  style="display:none;" class="cache-badge" style="background:#1a1a2a;border:1px solid #2d3d5a;color:#6ea8fe;">LIVE</span>
     </div>
     <div class="d-flex align-items-center gap-2">
-      <select id="profileSelect" class="form-select form-select-sm"
-              style="background:#14141a;border:1px solid #2a2a35;color:#e0e0e0;font-size:0.75rem;min-width:120px;max-width:180px;"
-              onchange="onProfileChange()"></select>
+      <!-- Profile dropdown -->
+      <div class="profile-dropdown-wrap" id="profileDropdownWrap">
+        <button class="profile-btn" id="profileBtn" onclick="toggleProfilePanel()">
+          <i class="fas fa-layer-group" style="font-size:0.7rem;color:#64748b;"></i>
+          <span id="profileBtnLabel">Profile</span>
+          <i class="fas fa-chevron-down" style="font-size:0.6rem;color:#64748b;"></i>
+        </button>
+        <div class="profile-panel" id="profilePanel"></div>
+      </div>
       <button id="refreshBtn" class="btn btn-sm btn-outline-success">
         <i class="fas fa-sync-alt me-1"></i><span class="d-none d-sm-inline"> Refresh Live</span><span class="d-inline d-sm-none">Refresh</span>
       </button>
@@ -671,6 +711,71 @@ function badge(flag) {
   return `<span class="badge-base badge-hold">HOLD</span>`;
 }
 function pnlClass(v) { return v == null ? '' : v >= 0 ? 'up' : 'dn'; }
+
+// ── Profile selector ──────────────────────────────────────────────────────
+let _profiles = [];
+let _currentProfileId = null;
+
+function getProfileId() { return _currentProfileId; }
+
+async function initProfiles() {
+  try {
+    const res = await fetch('/api/profiles');
+    _profiles = await res.json();
+    const saved = localStorage.getItem('tradingUiProfileId');
+    const savedId = saved ? parseInt(saved) : null;
+    const valid = savedId && _profiles.some(p => p.id === savedId);
+    _currentProfileId = valid ? savedId : ((_profiles[0] || {}).id || null);
+    renderProfilePanel();
+    updateTopbarProfile();
+  } catch(e) { console.warn('Profile load failed', e); }
+}
+
+function renderProfilePanel() {
+  const panel = document.getElementById('profilePanel');
+  if (!panel) return;
+  panel.innerHTML = _profiles.map(p => {
+    const isCurrent = p.id === _currentProfileId;
+    return `<div class="pp-card${isCurrent ? ' current' : ''}">
+      <span class="pp-name">${esc(p.name)}</span>
+      ${isCurrent
+        ? '<span class="pp-active-badge">ACTIVE</span>'
+        : `<button class="pp-use-btn" onclick="selectProfile(${p.id})">Use</button>`}
+    </div>`;
+  }).join('');
+  const cur = _profiles.find(p => p.id === _currentProfileId);
+  const lbl = document.getElementById('profileBtnLabel');
+  if (lbl && cur) lbl.textContent = cur.name;
+}
+
+function toggleProfilePanel() {
+  document.getElementById('profilePanel').classList.toggle('open');
+}
+
+function selectProfile(id) {
+  _currentProfileId = id;
+  localStorage.setItem('tradingUiProfileId', id);
+  renderProfilePanel();
+  updateTopbarProfile();
+  document.getElementById('profilePanel').classList.remove('open');
+  loadCached();
+}
+
+function updateTopbarProfile() {
+  const el = document.getElementById('topbar-profile');
+  if (!el) return;
+  const p = _profiles.find(x => x.id === _currentProfileId);
+  el.textContent = p ? '\u25CF ' + p.name : '';
+}
+
+// Close panel when clicking outside
+document.addEventListener('click', e => {
+  const wrap = document.getElementById('profileDropdownWrap');
+  if (wrap && !wrap.contains(e.target)) {
+    const panel = document.getElementById('profilePanel');
+    if (panel) panel.classList.remove('open');
+  }
+});
 
 // ── Holding modal ─────────────────────────────────────────────────────────
 let _holdingModal = null;
