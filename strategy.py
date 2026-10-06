@@ -60,6 +60,9 @@ def build_indicators(stock, spy, vix, vix3m, as_of=None):
     df = stock.copy()
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
+    for column in ('Open', 'High', 'Low', 'Close', 'Volume', 'Dividends', 'Stock Splits'):
+        if column in df.columns:
+            df[column] = pd.to_numeric(df[column], errors='coerce')
     df = df.sort_index()
     if as_of is not None:
         df = df.loc[df.index <= pd.Timestamp(as_of)]
@@ -70,7 +73,12 @@ def build_indicators(stock, spy, vix, vix3m, as_of=None):
         expected = session_dates(df.index.min().strftime('%Y-%m-%d'), df.index.max().strftime('%Y-%m-%d'))
         df = df.reindex(df.index.union(expected)).sort_index()
     for name, frame in [('spy', spy), ('vix', vix), ('vix3m', vix3m)]:
-        df[name] = frame['Close'].reindex(df.index) if not frame.empty else np.nan
+        if frame.empty:
+            df[name] = np.nan
+        else:
+            close = frame['Close'].copy()
+            close = pd.to_numeric(close, errors='coerce')
+            df[name] = close.reindex(df.index)
     df['vix_term'] = df['vix'] / df['vix3m'].where(df['vix3m'] > 0)
     df['spy_sma200'] = df['spy'].rolling(200).mean()
     for n in (20, 50, 200):
@@ -93,7 +101,8 @@ def build_indicators(stock, spy, vix, vix3m, as_of=None):
     df['consec_term'] = _streak(df['vix_term'] > 1.05)
     required = ['sma200','sma50','sma20','atr14','adx14','low90','high20','spy','spy_sma200',
                 'vix','vix3m','vix_term','stock_ret20','spy_ret20']
-    df['ready'] = np.isfinite(df[required]).all(axis=1) & (df['vix'] > 0) & (df['vix3m'] > 0)
+    numeric = df[required].to_numpy(dtype=float, na_value=np.nan)
+    df['ready'] = np.isfinite(numeric).all(axis=1) & (df['vix'] > 0) & (df['vix3m'] > 0)
     return df
 
 

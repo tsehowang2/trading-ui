@@ -35,7 +35,8 @@ def normalize(frame, cutoff):
         if c not in frame:
             frame[c] = 0.0
     frame = frame[PRICE_COLUMNS + ['Dividends', 'Stock Splits']].apply(pd.to_numeric, errors='coerce')
-    valid = np.isfinite(frame).all(axis=1) & (frame[['Open', 'High', 'Low', 'Close']] > 0).all(axis=1)
+    numeric = frame.to_numpy(dtype=float, na_value=np.nan)
+    valid = np.isfinite(numeric).all(axis=1) & (frame[['Open', 'High', 'Low', 'Close']] > 0).all(axis=1)
     valid &= (frame['Volume'] >= 0) & (frame['High'] >= frame[['Open', 'Close', 'Low']].max(axis=1))
     valid &= frame['Low'] <= frame[['Open', 'Close', 'High']].min(axis=1)
     return frame.loc[valid]

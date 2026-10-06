@@ -1,0 +1,174 @@
+{
+  "format": "tradingui-profiles",
+  "schema_version": 4,
+  "exported_at": "2026-10-06T08:04:37.437742+00:00",
+  "scope": "single_profile",
+  "active_profile_id": 2,
+  "profiles": [
+    {
+      "source_id": 2,
+      "name": "terry",
+      "settings": {
+        "capital": "22000.0",
+        "max_positions": "15",
+        "watchlist": [
+          "NVDA",
+          "AAPL",
+          "MSFT",
+          "AVGO",
+          "TSLA",
+          "META",
+          "AMZN",
+          "GOOGL",
+          "COST",
+          "LLY",
+          "NFLX",
+          "AMD",
+          "MU",
+          "AMAT",
+          "QCOM",
+          "TXN",
+          "UNH",
+          "ABBV",
+          "JNJ",
+          "TMO",
+          "ISRG",
+          "BAC",
+          "GS",
+          "PL",
+          "NOK",
+          "COHR",
+          "APH",
+          "CIEN",
+          "ADBE",
+          "CRM",
+          "ORCL",
+          "MRVL",
+          "LRCX",
+          "KLAC",
+          "PANW",
+          "CRWD",
+          "SNOW",
+          "NOW",
+          "VRTX",
+          "REGN",
+          "HD",
+          "NKE",
+          "SBUX",
+          "CAT",
+          "GE",
+          "UBER",
+          "DASH",
+          "SHOP",
+          "MELI",
+          "CDNS",
+          "SNPS",
+          "ANET",
+          "DELL",
+          "HPE",
+          "WDC",
+          "STX",
+          "FSLR",
+          "ENPH",
+          "ON",
+          "MPWR",
+          "NXPI",
+          "BE",
+          "INTC"
+        ],
+        "risk_per_trade_pct": "2.0",
+        "min_profit_for_pyramid": "5.0",
+        "min_cushion_for_pyramid": "8.0",
+        "cash_reserve_pct": "10.0",
+        "top_signals": "5",
+        "min_buy_confidence": "0.6",
+        "min_pyramid_confidence": "0.65",
+        "warn_hold_confidence": "0.4"
+      },
+      "holdings": [
+        {
+          "ticker": "AMD",
+          "entry_price": "452.17",
+          "shares": "2.0",
+          "notes": ""
+        },
+        {
+          "ticker": "AMKR",
+          "entry_price": "56.51",
+          "shares": "24.0",
+          "notes": ""
+        },
+        {
+          "ticker": "ASML",
+          "entry_price": "1830.35",
+          "shares": "1.0",
+          "notes": ""
+        },
+        {
+          "ticker": "ASTS",
+          "entry_price": "85.0",
+          "shares": "2.0",
+          "notes": ""
+        },
+        {
+          "ticker": "AVGO",
+          "entry_price": "376.17",
+          "shares": "2.0",
+          "notes": ""
+        },
+        {
+          "ticker": "CRWD",
+          "entry_price": "210.09",
+          "shares": "4.0",
+          "notes": ""
+        },
+        {
+          "ticker": "GOOG",
+          "entry_price": "368.14",
+          "shares": "2.0",
+          "notes": ""
+        },
+        {
+          "ticker": "MU",
+          "entry_price": "861.5",
+          "shares": "2.0",
+          "notes": ""
+        },
+        {
+          "ticker": "NVDA",
+          "entry_price": "206.33",
+          "shares": "3.0",
+          "notes": ""
+        },
+        {
+          "ticker": "QQQM",
+          "entry_price": "295.14",
+          "shares": "2.0",
+          "notes": ""
+        },
+        {
+          "ticker": "SOXL",
+          "entry_price": "127.89",
+          "shares": "10.0",
+          "notes": ""
+        },
+        {
+          "ticker": "TQQQ",
+          "entry_price": "77.6",
+          "shares": "25.0",
+          "notes": ""
+        },
+        {
+          "ticker": "VOO",
+          "entry_price": "693.12",
+          "shares": "6.0",
+          "notes": ""
+        }
+      ],
+      "accounts": [],
+      "signal_history": [],
+      "paper_runs": []
+    }
+  ],
+  "sha256": "b092d93b89c97396d5fb100640547f993d665190001e5ac1ed173470f5a950c7"
+}
