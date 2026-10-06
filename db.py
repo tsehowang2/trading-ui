@@ -8,6 +8,8 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from typing import List, Dict, Optional
 
+from profile_store import StorageError
+
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
 def get_connection():
@@ -681,4 +683,4 @@ else:
                    set_active_profile, create_profile, update_profile,
                    delete_profile, read_holdings_for_profile,
                    write_holdings_for_profile, delete_holding_for_profile,
-                   upsert_holding, StorageError)
+                   upsert_holding)
