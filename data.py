@@ -28,7 +28,7 @@ def normalize(frame, cutoff):
         frame.columns = frame.columns.get_level_values(0)
     if any(c not in frame for c in PRICE_COLUMNS):
         raise ValueError('Provider omitted OHLCV fields')
-    frame.index = pd.to_datetime(frame.index).tz_localize(None).normalize()
+    frame.index = pd.DatetimeIndex(pd.to_datetime(frame.index, errors='coerce')).tz_localize(None).normalize()
     frame = frame.loc[frame.index <= pd.Timestamp(cutoff)]
     frame = frame[~frame.index.duplicated(keep='last')].sort_index()
     for c in ('Dividends', 'Stock Splits'):
@@ -56,6 +56,7 @@ def cached_download(symbol, start, end, force=False):
     requested = session_dates(start, cutoff)
     if requested.empty:
         return pd.DataFrame(columns=PRICE_COLUMNS)
+    requested = pd.DatetimeIndex(requested)
     with symbol_cache(symbol, DATA_CACHE_DIR) as document:
         if document.get('policy') != POLICY:
             document.clear()
@@ -66,6 +67,7 @@ def cached_download(symbol, start, end, force=False):
             existing = normalize(existing.set_index('date'), completed)
         else:
             existing = normalize(pd.DataFrame(), cutoff)
+        existing.index = pd.DatetimeIndex(existing.index)
         missing = requested.difference(existing.index)
         # Suppress repeated same-session attempts for delisted/missing bars, but
         # do not mark them as available. New session or force retries them.
@@ -102,9 +104,11 @@ def cached_download(symbol, start, end, force=False):
                 else:
                     existing = pd.concat([existing, fetched])
                     existing = existing[~existing.index.duplicated(keep='last')].sort_index()
+                    existing.index = pd.DatetimeIndex(existing.index)
             document['attempt'] = dict(session=completed, start=min(attempt.get('start',str(start)[:10]),str(start)[:10]), end=cutoff)
         document.update(policy=POLICY, symbol=symbol, bars=_records(existing),
                         checked_at=datetime.now(timezone.utc).isoformat())
+        existing.index = pd.DatetimeIndex(existing.index)
         result = existing.loc[(existing.index >= pd.Timestamp(start)) & (existing.index <= pd.Timestamp(cutoff))].copy()
         result.attrs['price_policy'] = POLICY
         result.attrs['completed_session'] = cutoff

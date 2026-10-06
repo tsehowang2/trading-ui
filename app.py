@@ -484,6 +484,7 @@ def api_dashboard():
     holdings_from_profile = state['holdings'].get(str(pid), [])
     fingerprint = _profile_fingerprint(pid, state)
     observed = []
+    cached_data = None
     try:
 
         watchlist   = profile.get("watchlist", [])
@@ -530,12 +531,21 @@ def api_dashboard():
             data['_cache_warning'] = 'Analysis cache could not be saved'
 
         return jsonify({"success": True, "cached": False, "data": data})
-    except (ValueError, KeyError, db.StorageError):
-        raise
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"success": False, "error": str(e)}), 500
+        app.logger.exception('Live analysis failed for profile %s', pid)
+        try:
+            cached_data = analysis_cache.read(pid, _profile_cache_path(pid))
+        except Exception:
+            cached_data = None
+        if cached_data and cached_data.get('_profile_id') == pid:
+            cached_data.setdefault('_refresh_warning', 'Refresh failed; showing the last cached analysis instead.')
+            return jsonify({
+                "success": False,
+                "cached": True,
+                "warning": str(e),
+                "data": cached_data,
+            })
+        return jsonify({"success": False, "cached": False, "error": 'Refresh failed; try again in a moment.'})
 
 
 # ══ Profile management API ════════════════════════════════════════════════════

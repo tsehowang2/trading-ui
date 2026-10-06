@@ -66,12 +66,14 @@ def build_indicators(stock, spy, vix, vix3m, as_of=None):
     df = df.sort_index()
     if as_of is not None:
         df = df.loc[df.index <= pd.Timestamp(as_of)]
+    df.index = pd.DatetimeIndex(df.index)
     # Insert absent exchange sessions as unknown, so rolling windows/streaks
     # cannot silently bridge a missing observation as a consecutive day.
     if not df.empty:
         from market_sessions import session_dates
         expected = session_dates(df.index.min().strftime('%Y-%m-%d'), df.index.max().strftime('%Y-%m-%d'))
         df = df.reindex(df.index.union(expected)).sort_index()
+    df.index = pd.DatetimeIndex(df.index)
     for name, frame in [('spy', spy), ('vix', vix), ('vix3m', vix3m)]:
         if frame.empty:
             df[name] = np.nan
@@ -173,6 +175,8 @@ def evaluate_session(state, ind, config=StrategyConfig()):
 def replay(frame, start, end, capital=100_000, config=StrategyConfig(), liquidate=False):
     state, pending, trades, decisions, equity = PositionState(), None, [], [], []
     cash = float(capital)
+    frame = frame.copy()
+    frame.index = pd.DatetimeIndex(frame.index)
     window = frame.loc[(frame.index >= pd.Timestamp(start)) & (frame.index <= pd.Timestamp(end))]
     for date, cur in window.iterrows():
         # A missing stock bar is never silently crossed with a later-open fill.

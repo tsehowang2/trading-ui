@@ -1175,16 +1175,27 @@ async function loadCached() {
 async function loadLive() {
   $('loader').innerHTML = `<div class="spinner-border"></div><p>Running live analysis… this may take 20–60 seconds</p>`;
   $('loader').style.display      = 'flex';
-  $('dashContent').style.display = 'none';
   $('refreshBtn').disabled = true;
   $('refreshBtn').innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Running…';
   const pid = getProfileId();
   try {
-    const json = await (await fetch(`/api/dashboard/refresh?profile_id=${pid || ''}`, {method: 'POST'})).json();
-    if (!json.success) throw new Error(json.error);
-    render(json.data, false);
+    const res = await fetch(`/api/dashboard/refresh?profile_id=${pid || ''}`, {method: 'POST'});
+    const json = await res.json();
+    if (json.data) {
+      render(json.data, Boolean(json.cached));
+      if (!json.success) {
+        showBanner(json.warning || json.error || 'Refresh failed; showing the last available analysis.');
+      }
+    } else if (!json.success) {
+      throw new Error(json.error || 'Refresh failed');
+    } else {
+      render(json.data, false);
+    }
   } catch(e) {
-    $('loader').innerHTML = `<div class="dn"><i class="fas fa-exclamation-triangle me-2"></i>Error: ${e.message}</div>`;
+    if ($('dashContent').style.display !== 'block') {
+      $('loader').innerHTML = `<div class="dn"><i class="fas fa-exclamation-triangle me-2"></i>Refresh failed: ${e.message}</div>`;
+    }
+    showBanner(`Refresh failed: ${e.message}`);
   } finally {
     $('refreshBtn').disabled = false;
     $('refreshBtn').innerHTML = '<i class="fas fa-sync-alt me-1"></i> Refresh Live';
