@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Portfolio login</title><link href="/static/css/style.css" rel="stylesheet"></head>
+<body style="display:grid;place-items:center;min-height:100vh;background:#14141a;color:#e0e0e0">
+<form method="post" style="max-width:360px;padding:2rem;border:1px solid #334155;border-radius:12px">
+  <h1 style="font-size:1.4rem">Personal portfolio</h1>
+  <p>Sign in to access accounts and backups.</p>
+  {% if error %}<p role="alert" style="color:#f87171">{{ error }}</p>{% endif %}
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label for="password">Password</label>
+  <input id="password" name="password" type="password" autocomplete="current-password" required
+         style="display:block;width:100%;margin:1rem 0;padding:.6rem">
+  <button type="submit" style="padding:.6rem 1rem">Sign in</button>
+</form></body></html>

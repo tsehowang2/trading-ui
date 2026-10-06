@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Accounts & Trades{% endblock %}
+{% block page_title %}Accounts & Trades{% endblock %}
+{% block head %}
+<style>
+.ledger-panel{background:#1a1a1f;border:1px solid #2a2a35;border-radius:10px;padding:1.2rem;margin-bottom:1rem}
+.ledger-panel input,.ledger-panel select,.ledger-panel textarea{background:#14141a;color:#e0e0e0;border:1px solid #334155;border-radius:5px;padding:.45rem;width:100%}
+.ledger-panel label{font-size:.78rem;color:#94a3b8;margin-bottom:.3rem}.ledger-panel h3{font-size:1rem}
+.ledger-table{width:100%;font-size:.8rem;color:#cbd5e1}.ledger-table td,.ledger-table th{padding:.5rem;border-bottom:1px solid #2a2a35;white-space:nowrap}
+.ledger-muted{font-size:.8rem;color:#94a3b8}.ledger-metric{font-size:1.2rem;font-weight:600}.ledger-error{color:#f87171}
+</style>
+{% endblock %}
+{% block content %}
+<div class="container-fluid">
+  <div id="ledgerMessage" role="status" class="mb-3 ledger-muted"></div>
+  <div class="ledger-panel">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-4"><label for="ledgerProfile">Profile</label><select id="ledgerProfile" onchange="selectLedgerProfile()"></select></div>
+      <div class="col-md-4"><label for="ledgerAccount">Account</label><select id="ledgerAccount" onchange="loadLedgerReport()"></select></div>
+      <div class="col-md-4 d-flex gap-2"><button class="btn btn-sm btn-outline-success" onclick="createLedgerAccount('manual')">Create manual</button>
+      <button class="btn btn-sm btn-outline-primary" onclick="createLedgerAccount('paper')">Create paper</button></div>
+    </div>
+    <p class="ledger-muted mt-3 mb-0">Manual history and strategy cash are separate. Use Strategy Paper to start/run automatic simulation; its account cannot be edited here. Enter actual historical manual funding and trades; legacy holdings remain preserved.</p>
+  </div>
+  <div id="ledgerContent" hidden>
+    <div class="ledger-panel"><div class="row g-3" id="ledgerMetrics"></div><p class="ledger-muted mt-3 mb-0" id="valuationNote"></p></div>
+    <div class="row g-3">
+      <div class="col-lg-6"><form class="ledger-panel" id="eventForm" onsubmit="submitLedgerEvent(event)">
+        <h3>Record an event</h3><div class="row g-3">
+          <div class="col-6"><label for="eventKind">Type</label><select id="eventKind" onchange="eventFields()">
+            <option>DEPOSIT</option><option>WITHDRAWAL</option><option>BUY</option><option>SELL</option><option>DIVIDEND</option><option>SPLIT</option>
+          </select></div>
+          <div class="col-6"><label for="eventTime">When (your local timezone)</label><input id="eventTime" type="datetime-local" step="1" required></div>
+          <div class="col-6" data-fields="BUY SELL DIVIDEND SPLIT"><label for="eventTicker">Ticker</label><input id="eventTicker" placeholder="AAPL" maxlength="20"></div>
+          <div class="col-6" data-fields="DEPOSIT WITHDRAWAL DIVIDEND"><label for="eventAmount">Amount ($)</label><input id="eventAmount" type="number" step="any" min="0.000000000001"></div>
+          <div class="col-6" data-fields="BUY SELL"><label for="eventShares">Shares (whole-share buys)</label><input id="eventShares" type="number" step="any" min="0.000000000001"></div>
+          <div class="col-6" data-fields="BUY SELL"><label for="eventPrice">Execution price ($)</label><input id="eventPrice" type="number" step="any" min="0.000000000001"></div>
+          <div class="col-6" data-fields="BUY SELL"><label for="eventFee">Total fee ($)</label><input id="eventFee" type="number" step="any" min="0" value="0"></div>
+          <div class="col-6" data-fields="BUY SELL"><label for="eventTag">Trade classification</label><select id="eventTag"><option value="discretionary">Discretionary / no strategy</option><option value="strategy">Strategy tagged</option></select></div>
+          <div class="col-6" data-fields="SPLIT"><label for="eventRatio">New shares / old shares</label><input id="eventRatio" type="number" step="any" min="0.000000000001" placeholder="2 for a 2:1 split"></div>
+          <div class="col-12"><label for="eventNotes">Notes</label><input id="eventNotes" maxlength="10000"></div>
+        </div><button id="saveEvent" class="btn btn-sm btn-outline-success mt-3" type="submit">Record event</button>
+        <p class="ledger-muted mt-2 mb-0">Negative historical cash and oversells are rejected. Add earlier funding first. Strategy tags are your classification—not proof a strategy signal existed.</p>
+      </form></div>
+      <div class="col-lg-6"><div class="ledger-panel">
+        <h3>Quote-based valuation</h3><p class="ledger-muted">Optional current quotes you supply. No market downloads in this milestone; quotes are not saved and full equity is shown only when every held stock is priced.</p>
+        <label for="quoteMarks">Quotes as JSON</label><textarea id="quoteMarks" rows="3" placeholder='{"AAPL":"150.00","MSFT":"400.00"}'></textarea>
+        <button class="btn btn-sm btn-outline-primary mt-2" onclick="loadLedgerReport(true)">Value positions</button>
+      </div><div class="ledger-panel" id="batchPanel">
+        <h3>Atomic historical batch / correction</h3><p class="ledger-muted">Paste a JSON array of events. Each needs a UUID id, kind and timezone-aware occurred_at. Corrections append a VOID with target_id and reason, followed by replacement events in the same batch. Original records remain in history.</p>
+        <label for="batchEvents">Event array</label><textarea id="batchEvents" rows="4" placeholder='[{"id":"UUID","kind":"DEPOSIT","occurred_at":"2025-01-01T00:00:00Z","amount":"1000"}]'></textarea>
+        <button class="btn btn-sm btn-outline-secondary mt-2" onclick="submitLedgerBatch()">Validate & record batch</button>
+      </div></div>
+    </div>
+    <div class="ledger-panel"><h3>Open positions — FIFO remaining cost</h3><div class="table-responsive"><table class="ledger-table"><thead><tr><th>Ticker</th><th>Shares</th><th>Cost basis</th><th>Average cost incl. fees</th><th>Earliest remaining buy</th><th>Quote</th><th>Unrealized P&L</th></tr></thead><tbody id="positionRows"></tbody></table></div></div>
+    <div class="ledger-panel"><h3>Per-stock results</h3><div class="table-responsive"><table class="ledger-table"><thead><tr><th>Ticker</th><th>Realized P&L</th><th>Dividends</th><th>Fees</th><th>Buys / Sells</th><th>Strategy / Discretionary trades</th></tr></thead><tbody id="stockRows"></tbody></table></div><p class="ledger-muted mt-2" id="tagResults"></p></div>
+    <div class="ledger-panel"><h3>Recorded events</h3><div class="table-responsive"><table class="ledger-table"><thead><tr><th>Seq</th><th>Occurred (UTC)</th><th>Type</th><th>Ticker</th><th>Shares / Amount</th><th>Price / Ratio</th><th>Fee</th><th>Tag</th><th>Notes / Correction</th><th>Action</th></tr></thead><tbody id="eventRows"></tbody></table></div></div>
+    <div class="ledger-panel"><h3>Legacy holdings reconciliation</h3><p class="ledger-muted">Comparison only. Fees affect ledger average cost; a cost difference may be expected. No old holdings are overwritten.</p><div class="table-responsive"><table class="ledger-table"><thead><tr><th>Ticker</th><th>Legacy shares</th><th>Ledger shares</th><th>Match</th><th>Legacy price</th><th>Ledger average cost</th></tr></thead><tbody id="reconcileRows"></tbody></table></div></div>
+    <div class="ledger-panel"><h3>Observed entry conditions</h3><p class="ledger-muted">Recorded on portfolio Refresh, not reconstructed alerts. Decision session and observation time are different. Eligibility is not an account-state order or fill; data revisions append records.</p><div class="table-responsive"><table class="ledger-table"><thead><tr><th>Ticker</th><th>Session</th><th>Observed (UTC)</th><th>Eligible</th><th>New transition</th><th>Reason</th><th>Strategy</th></tr></thead><tbody id="observedRows"></tbody></table></div></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let ledgerAccounts = [], ledgerReport = null, retryEvent = null;
+const le = id => document.getElementById(id);
+const lesc = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = value => value == null ? 'Unpriced' : Number(value).toLocaleString('en-US',{style:'currency',currency:'USD'});
+function message(text, error=false){le('ledgerMessage').textContent=text;le('ledgerMessage').className=error?'mb-3 ledger-error':'mb-3 ledger-muted';}
+function accountUrl(){return `/api/profiles/${le('ledgerProfile').value}/accounts/${le('ledgerAccount').value}`;}
+async function ledgerFetch(url, options){const res=await fetch(url,options);const body=await res.json();if(!res.ok)throw new Error(body.error||'Request failed');return body;}
+async function initLedger(){try{
+  const profiles=await ledgerFetch('/api/profiles');
+  le('ledgerProfile').innerHTML=profiles.map(p=>`<option value="${p.id}">${lesc(p.name)}</option>`).join('');
+  const saved=localStorage.getItem('tradingUiProfileId');if(profiles.some(p=>String(p.id)===saved))le('ledgerProfile').value=saved;
+  eventFields();const now=new Date();now.setMinutes(now.getMinutes()-now.getTimezoneOffset());le('eventTime').value=now.toISOString().slice(0,19);
+  await selectLedgerProfile();
+}catch(e){message(e.message,true);}}
+async function selectLedgerProfile(){retryEvent=null;le('quoteMarks').value='';le('batchEvents').value='';localStorage.setItem('tradingUiProfileId',le('ledgerProfile').value);await loadLedgerAccounts();}
+async function loadLedgerAccounts(){try{
+  ledgerAccounts=await ledgerFetch(`/api/profiles/${le('ledgerProfile').value}/accounts`);
+  le('ledgerAccount').innerHTML=ledgerAccounts.map(a=>`<option value="${a.id}">${lesc(a.kind)} — USD (${a.event_count} events)</option>`).join('');
+  if(ledgerAccounts.length)await loadLedgerReport();else{le('ledgerContent').hidden=true;message('Create a manual account to enter history, or a separate paper account to record funding.');}
+}catch(e){message(e.message,true);}}
+async function createLedgerAccount(kind){try{await ledgerFetch(`/api/profiles/${le('ledgerProfile').value}/accounts`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind})});await loadLedgerAccounts();const account=ledgerAccounts.find(a=>a.kind===kind);le('ledgerAccount').value=account.id;await loadLedgerReport();}catch(e){message(e.message,true);}}
+function eventFields(){const kind=le('eventKind').value;document.querySelectorAll('[data-fields]').forEach(el=>{el.hidden=!el.dataset.fields.split(' ').includes(kind);el.querySelectorAll('input,select').forEach(input=>input.required=!el.hidden);});}
+function draftEvent(){const kind=le('eventKind').value;const date=new Date(le('eventTime').value);if(isNaN(date))throw new Error('Choose a valid local date/time');
+  const data={kind,occurred_at:date.toISOString(),notes:le('eventNotes').value};
+  if(['BUY','SELL','DIVIDEND','SPLIT'].includes(kind))data.ticker=le('eventTicker').value.trim().toUpperCase();
+  if(['DEPOSIT','WITHDRAWAL','DIVIDEND'].includes(kind))data.amount=le('eventAmount').value;
+  if(['BUY','SELL'].includes(kind))Object.assign(data,{shares:le('eventShares').value,price:le('eventPrice').value,fee:le('eventFee').value,tag:le('eventTag').value});
+  if(kind==='SPLIT')data.ratio=le('eventRatio').value;return data;}
+async function submitLedgerEvent(e){e.preventDefault();le('saveEvent').disabled=true;try{
+  const data=draftEvent();const signature=accountUrl()+JSON.stringify(data);if(!retryEvent||retryEvent.signature!==signature)retryEvent={signature,id:crypto.randomUUID()};
+  await ledgerFetch(accountUrl()+'/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...data,id:retryEvent.id})});
+  await loadLedgerReport();message('Event saved. Original history and legacy holdings are preserved.');
+}catch(e){message(e.message,true);}finally{le('saveEvent').disabled=false;}}
+async function submitLedgerBatch(){try{const events=JSON.parse(le('batchEvents').value);await ledgerFetch(accountUrl()+'/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({events})});await loadLedgerReport();message('Batch saved atomically.');}catch(e){message(e.message,true);}}
+async function voidLedgerEvent(id){const reason=prompt('Reason for voiding this event? History is preserved; invalid resulting balances will be rejected.');if(!reason||!reason.trim())return;try{
+  await ledgerFetch(accountUrl()+'/events',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:crypto.randomUUID(),kind:'VOID',target_id:id,occurred_at:new Date().toISOString(),notes:reason})});
+  await loadLedgerReport();message('Correction recorded.');
+}catch(e){message(e.message,true);}}
+async function loadLedgerReport(useMarks=false){try{
+  const marks=useMarks?JSON.parse(le('quoteMarks').value||'{}'):{};
+  ledgerReport=await ledgerFetch(accountUrl()+'/report',useMarks?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({marks})}:undefined);
+  const r=ledgerReport;le('ledgerContent').hidden=false;message('History replayed in execution-time order.');
+  if(retryEvent&& !retryEvent.signature.startsWith(accountUrl()))retryEvent=null;
+  const paper=r.account.kind==='paper';
+  Array.from(le('eventKind').options).forEach(option=>{option.disabled=paper&&!['DEPOSIT','WITHDRAWAL'].includes(option.value);});
+  if(paper&&!['DEPOSIT','WITHDRAWAL'].includes(le('eventKind').value))le('eventKind').value='DEPOSIT';
+  le('batchPanel').hidden=paper;eventFields();
+  le('ledgerMetrics').innerHTML=[['Cash',r.cash],['Net funding',r.net_funding],['Realized P&L',r.realized_pnl],['Unrealized P&L',r.unrealized_pnl],['Equity',r.equity],['Net profit incl. dividends',r.net_profit]].map(([label,value])=>`<div class="col-6 col-md-4 col-xl-2"><div class="ledger-muted">${label}</div><div class="ledger-metric">${money(value)}</div></div>`).join('');
+  le('valuationNote').textContent=r.valuation_source+(r.missing_marks.length?' — missing: '+r.missing_marks.join(', '):'')+'. Dollar profit excludes deposits/withdrawals; time-weighted performance is not available yet.';
+  const cells=values=>'<tr>'+values.map(v=>'<td>'+lesc(v)+'</td>').join('')+'</tr>';
+  le('positionRows').innerHTML=r.positions.map(p=>cells([p.ticker,p.shares,money(p.cost_basis),money(p.average_cost),p.entry_at,money(p.mark),money(p.unrealized_pnl)])).join('');
+  le('stockRows').innerHTML=r.per_stock.map(s=>cells([s.ticker,money(s.realized),money(s.dividends),money(s.fees),`${s.buys} / ${s.sells}`,`${s.strategy_trades} / ${s.discretionary_trades}`])).join('');
+  le('tagResults').textContent=`FIFO realized profit by BUY classification: strategy ${money(r.realized_by_entry_tag.strategy)}; discretionary ${money(r.realized_by_entry_tag.discretionary)}. This is accounting attribution, not a strategy-effectiveness comparison.`;
+  const voided=new Set(r.voided_ids);le('eventRows').innerHTML=[...r.account.events].sort((a,b)=>b.sequence-a.sequence).map(e=>{
+    const values=[e.sequence,e.occurred_at,e.kind+(voided.has(e.id)?' (voided)':''),e.ticker||'',e.shares||e.amount||'',e.price||e.ratio||'',e.fee||'',e.tag||'',e.notes+(e.target_id?' → '+e.target_id:'')];
+    return '<tr>'+values.map(v=>'<td>'+lesc(v)+'</td>').join('')+`<td>${e.kind!=='VOID'&&!voided.has(e.id)&&(r.account.kind==='manual'||['DEPOSIT','WITHDRAWAL'].includes(e.kind))?`<button class="btn btn-sm btn-outline-secondary" onclick="voidLedgerEvent('${e.id}')">Void</button>`:''}<small class="d-block ledger-muted">${lesc(e.id)}</small></td></tr>`;
+  }).join('');
+  le('reconcileRows').innerHTML=r.legacy_reconciliation.map(p=>cells([p.ticker,p.legacy_shares,p.ledger_shares,p.shares_match?'Yes':'No',money(p.legacy_entry_price),money(p.ledger_average_cost)])).join('');
+  const observations=await ledgerFetch(`/api/profiles/${le('ledgerProfile').value}/signals`);
+  le('observedRows').innerHTML=observations.slice(-100).reverse().map(s=>cells([s.ticker,s.signal_session,s.observed_at,s.entry_ok?'Yes':'No',s.fresh_entry?'Yes':'No',s.entry_reason,s.strategy_version])).join('');
+}catch(e){message(e.message,true);}}
+initLedger();
+</script>
+{% endblock %}

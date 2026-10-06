@@ -51,6 +51,27 @@
 
 <div class="toast-msg" id="toast"></div>
 
+<div class="settings-section">
+  <h5><i class="fas fa-shield-halved me-2"></i>Portable Profile Backups</h5>
+  <p style="font-size:.82rem;color:#94a3b8">Download saved settings, watchlists and holdings to your computer before your Render database expires.
+    Version 4 includes account events, signal observations and automatic strategy checkpoints, pending orders and equity history. Unsaved form changes are not exported.</p>
+  <div class="d-flex gap-2 flex-wrap mb-3">
+    <button class="btn btn-sm btn-outline-success" onclick="downloadBackup(false)">Export all profiles</button>
+    <button class="btn btn-sm btn-outline-primary" onclick="downloadBackup(true)">Export selected profile</button>
+    <label class="btn btn-sm btn-outline-secondary mb-0">Choose backup
+      <input id="backupFile" type="file" accept=".json,application/json" hidden onchange="previewBackup(this)">
+    </label>
+  </div>
+  <div id="backupPreview" style="display:none">
+    <div id="backupSummary" style="font-size:.82rem;color:#94a3b8" class="mb-2"></div>
+    <div class="d-flex gap-2 flex-wrap">
+      <button id="importNewBtn" class="btn btn-sm btn-outline-success" onclick="applyBackup('new')">Import as new profiles (recommended)</button>
+      <button id="restoreBtn" class="btn btn-sm btn-outline-danger" onclick="applyBackup('restore')">Replace ALL profiles…</button>
+    </div>
+    <p style="font-size:.75rem;color:#94a3b8" class="mt-2">Import-as-new leaves existing profiles untouched. Full replacement replaces accounts and histories too; a version 1 backup has no account history. It requires an all-profiles backup and a fresh download of your current data.</p>
+  </div>
+</div>
+
 <div class="row g-3">
 
   <!-- LEFT: Profile list -->
@@ -147,13 +168,91 @@ let profiles = [];
 let activeId = null;
 let editingId = null;
 let watchlist = [];
+let pendingBackup = null;
+let backupToken = null;
+
+async function downloadBackup(selected) {
+  if (selected && !editingId) { showToast('Select a profile first', true); return false; }
+  try {
+    const res = await fetch('/api/backup/export' + (selected ? '?profile_id=' + editingId : ''));
+    if (!res.ok) throw new Error((await res.json()).error || 'Export failed');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="([^"]+)"/);
+    link.download = match ? match[1] : 'tradingui-backup.json';
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast('Backup downloaded — keep it outside Render');
+    return true;
+  } catch (e) { showToast(e.message, true); return false; }
+}
+
+async function previewBackup(input) {
+  pendingBackup = null; backupToken = null;
+  document.getElementById('backupPreview').style.display = 'none';
+  const file = input.files[0];
+  if (!file) return;
+  try {
+    if (file.size > 4 * 1024 * 1024) throw new Error('Backup is too large (maximum file size 4 MB)');
+    const documentData = JSON.parse(await file.text());
+    const res = await fetch('/api/backup/preview', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({document:documentData})
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Validation failed');
+    pendingBackup = documentData; backupToken = data.preview_token;
+    const summary = data.summary;
+    document.getElementById('backupSummary').textContent =
+      `Validated v${summary.schema_version} backup: ${summary.profiles.map(p => `${p.name} (${p.holdings} holdings, ${p.watchlist} watchlist symbols, ${p.accounts} accounts, ${p.events} events, ${p.observations} observations)`).join('; ')}. Exported ${summary.exported_at}. ${(summary.warnings || []).join('; ')}`;
+    document.getElementById('restoreBtn').disabled = summary.scope !== 'all_profiles';
+    document.getElementById('backupPreview').style.display = '';
+  } catch (e) { showToast(e.message, true); }
+}
+
+async function applyBackup(mode) {
+  if (!pendingBackup || !backupToken) return;
+  let confirmation;
+  if (mode === 'restore') {
+    if (!await downloadBackup(false)) return;
+    confirmation = prompt('Save the downloaded current backup. This replaces ALL profiles, accounts, event histories and strategy run progress. Older backups omit newer histories. Type REPLACE ALL PROFILES to continue.');
+    if (confirmation !== 'REPLACE ALL PROFILES') return;
+  } else if (!confirm('Import saved settings and holdings as new profiles? Existing profiles remain unchanged.')) return;
+  const importButton = document.getElementById('importNewBtn');
+  const restoreButton = document.getElementById('restoreBtn');
+  importButton.disabled = true; restoreButton.disabled = true;
+  try {
+    const res = await fetch('/api/backup/import', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({document:pendingBackup, preview_token:backupToken, mode, confirmation})
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Import failed');
+    pendingBackup = null; backupToken = null;
+    document.getElementById('backupPreview').style.display = 'none';
+    document.getElementById('backupFile').value = '';
+    if (mode === 'restore') localStorage.removeItem('tradingUiProfileId');
+    await loadProfiles();
+    if (data.imported.length) selectProfile(data.imported[0].id);
+    showToast(`Imported ${data.imported.length} profile(s)`);
+  } catch (e) { showToast(e.message, true); }
+  finally {
+    importButton.disabled = false;
+    restoreButton.disabled = !pendingBackup || pendingBackup.scope !== 'all_profiles';
+  }
+}
 
 async function loadProfiles() {
   const res = await fetch('/api/profiles');
+  if (!res.ok) { showToast((await res.json()).error || 'Could not load profiles', true); return; }
   profiles = await res.json();
-  activeId = (profiles.find(p => p.is_active) || profiles[0] || {}).id || null;
+  const saved = Number(localStorage.getItem('tradingUiProfileId'));
+  activeId = (profiles.find(p => p.id === saved) || profiles.find(p => p.is_active) || profiles[0] || {}).id || null;
+  const selected = profiles.some(p => p.id === editingId) ? editingId : activeId;
   renderProfileList();
-  if (profiles.length > 0) selectProfile(activeId || profiles[0].id);
+  if (profiles.length > 0) selectProfile(selected || profiles[0].id);
 }
 
 function renderProfileList() {
@@ -161,6 +260,7 @@ function renderProfileList() {
   el.innerHTML = profiles.map(p => `
     <div class="profile-card ${p.id === editingId ? 'active' : ''}" onclick="selectProfile(${p.id})">
       <span class="profile-name">${esc(p.name)}</span>
+      <button class="btn-icon" onclick="event.stopPropagation();setActive(${p.id})">Use</button>
     </div>
   `).join('');
 }

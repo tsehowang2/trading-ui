@@ -1,9 +1,21 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for, Response
 import json
 import os
 import sys
 import math
-from datetime import datetime, timedelta
+import secrets
+import hmac
+from datetime import datetime, timedelta, timezone
+from werkzeug.security import check_password_hash
+from validation import settings as validate_settings
+import backup
+import profile_store
+import analysis_cache
+import ledger
+import signal_history
+import strategy
+import paper
+from market_sessions import latest_completed_session
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)          # workspace root (SAC/)
@@ -16,7 +28,81 @@ import pandas as pd
 import db  # PostgreSQL storage module
 
 app = Flask(__name__, template_folder=os.path.join(_HERE, 'templates'))
-app.secret_key = "your-secret-key"
+app.secret_key = os.environ.get('FLASK_SECRET_KEY') or secrets.token_hex(32)
+app.config.update(MAX_CONTENT_LENGTH=5 * 1024 * 1024,
+                  SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Lax',
+                  SESSION_COOKIE_SECURE=bool(os.environ.get('RENDER')))
+
+
+@app.errorhandler(ValueError)
+def invalid_input(error):
+    return jsonify(error=str(error)), 400
+
+
+@app.errorhandler(KeyError)
+def missing_profile(error):
+    return jsonify(error='Profile not found'), 404
+
+
+@app.errorhandler(db.StorageError)
+def unavailable_storage(error):
+    app.logger.error('Profile storage unavailable')
+    return jsonify(error=str(error)), 503
+
+
+def _json_body():
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        raise ValueError('A JSON object is required')
+    return body
+
+
+@app.context_processor
+def security_context():
+    session.setdefault('csrf_token', secrets.token_hex(32))
+    return {'csrf_token': session['csrf_token'], 'login_enabled': bool(os.environ.get('APP_PASSWORD_HASH'))}
+
+
+@app.before_request
+def protect_application():
+    if app.testing and app.config.get('SECURITY_DISABLED_FOR_TESTS'):
+        return None
+    password_hash = os.environ.get('APP_PASSWORD_HASH')
+    if (db.DATABASE_URL or os.environ.get('RENDER')) and (
+            not password_hash or not os.environ.get('FLASK_SECRET_KEY')):
+        return jsonify(error='Configure APP_PASSWORD_HASH and FLASK_SECRET_KEY before exposing this deployment'), 503
+    if not password_hash and request.remote_addr not in ('127.0.0.1', '::1'):
+        return jsonify(error='Authentication must be configured for remote access'), 403
+    if request.endpoint == 'static':
+        return None
+    if password_hash and request.endpoint != 'login' and not session.get('authenticated'):
+        if request.path.startswith('/api/'):
+            return jsonify(error='Login required'), 401
+        return redirect(url_for('login'))
+    if request.method not in ('GET', 'HEAD', 'OPTIONS'):
+        token = request.headers.get('X-CSRF-Token') or request.form.get('csrf_token', '')
+        if not token or not hmac.compare_digest(token, session.get('csrf_token', '')):
+            return jsonify(error='Invalid CSRF token; reload the page'), 403
+    return None
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        password_hash = os.environ.get('APP_PASSWORD_HASH', '')
+        if not password_hash or not check_password_hash(password_hash, request.form.get('password', '')):
+            return render_template('login.html', error='Invalid password'), 401
+        session.clear()
+        session['authenticated'] = True
+        session['csrf_token'] = secrets.token_hex(32)
+        return redirect(url_for('index'))
+    return render_template('login.html')
+
+
+@app.route('/logout', methods=['POST'])
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
 
 HOLDINGS_PATH  = os.path.join(_HERE, "holdings.json")
 CACHE_PATH     = os.path.join(_HERE, "results", "portfolio_cache.json")
@@ -29,16 +115,26 @@ def _resolve_profile_id() -> int:
     Each browser session passes its own profile_id so multiple users can
     view different profiles simultaneously.
     """
-    pid = request.args.get('profile_id', type=int)
-    if pid is None:
-        try:
-            body = request.get_json(silent=True) or {}
+    raw = request.args.get('profile_id')
+    if raw is None:
+        body = request.get_json(silent=True)
+        if isinstance(body, dict):
             raw = body.get('profile_id')
-            if raw is not None:
-                pid = int(raw)
-        except Exception:
-            pass
-    return pid if pid is not None else db.get_active_profile_id()
+    if raw is None:
+        pid = db.get_active_profile_id()
+    else:
+        if isinstance(raw, bool) or not str(raw).isdigit() or int(raw) <= 0:
+            raise ValueError('profile_id must be a positive integer')
+        pid = int(raw)
+    _require_profile(pid)
+    return pid
+
+
+def _require_profile(pid):
+    profile = next((p for p in db.list_profiles() if p['id'] == pid), None)
+    if profile is None:
+        raise KeyError('Profile not found')
+    return profile
 
 def _read_holdings_json(profile_id: int | None = None) -> list[dict]:
     """Return raw holdings for the given profile (or resolve from request)."""
@@ -48,15 +144,17 @@ def _read_holdings_json(profile_id: int | None = None) -> list[dict]:
 def _write_holdings_json(rows: list[dict], profile_id: int | None = None) -> None:
     """Persist holdings for the given profile (or resolve from request)."""
     pid = profile_id if profile_id is not None else _resolve_profile_id()
-    db.write_holdings_for_profile(pid, rows)
-    _invalidate_portfolio_cache()
+    if not db.write_holdings_for_profile(pid, rows):
+        raise db.StorageError('Holdings save failed')
+    _invalidate_portfolio_cache(pid)
 
-def _invalidate_portfolio_cache() -> None:
+def _invalidate_portfolio_cache(profile_id: int | None = None) -> None:
     """Clear cached portfolio analysis so next load forces a re-run."""
     # Remove JSON cache file
     try:
-        if os.path.exists(CACHE_PATH):
-            os.remove(CACHE_PATH)
+        path = _profile_cache_path(profile_id) if profile_id is not None else CACHE_PATH
+        if os.path.exists(path):
+            os.remove(path)
     except Exception:
         pass
     # Remove PostgreSQL cache row
@@ -65,11 +163,29 @@ def _invalidate_portfolio_cache() -> None:
             conn = db.get_connection()
             if conn:
                 with conn.cursor() as cur:
-                    cur.execute("DELETE FROM portfolio_cache WHERE id = 1")
+                    if profile_id is None:
+                        cur.execute('DELETE FROM profile_analysis_cache')
+                    else:
+                        cur.execute('DELETE FROM profile_analysis_cache WHERE profile_id = %s', (profile_id,))
                 conn.commit()
                 conn.close()
         except Exception:
             pass
+
+def _profile_cache_path(pid):
+    return os.path.join(os.path.dirname(CACHE_PATH), f'portfolio_cache_{pid}.json')
+
+
+def _profile_fingerprint(pid, state=None):
+    import hashlib
+    state = profile_store.snapshot() if state is None else state
+    profile = next((dict(p) for p in state['profiles'] if p['id'] == pid), None)
+    if profile is None:
+        raise KeyError('Profile not found')
+    profile.pop('is_active', None)
+    payload = {'profile': profile, 'holdings': state['holdings'].get(str(pid), [])}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, allow_nan=False).encode()).hexdigest()
+
 
 def _read_config_watchlist() -> list:
     """Read watchlist from config.toml, returning [] on failure."""
@@ -135,32 +251,26 @@ def index():
 @app.route('/api/holdings', methods=['GET', 'POST', 'DELETE'])
 def api_holdings():
     pid = _resolve_profile_id()
+    return _holdings_response(pid)
+
+
+def _holdings_response(pid):
+    _require_profile(pid)
     if request.method == 'GET':
-        holdings = db.read_holdings_for_profile(pid)
-        print(f"[API] GET /api/holdings (profile {pid}) → {len(holdings)} holdings")
-        return jsonify(holdings)
-    elif request.method == 'POST':
-        data     = request.json or {}
-        ticker   = str(data.get('ticker', '')).strip().upper()
-        holdings = db.read_holdings_for_profile(pid)
-        existing = next((h for h in holdings if h['ticker'] == ticker), None)
-        if existing:
-            existing['entry_price'] = float(data.get('entry_price', existing['entry_price']))
-            existing['shares']      = float(data.get('shares', existing['shares']))
-            existing['notes']       = str(data.get('notes', existing.get('notes', '')))
+        return jsonify(db.read_holdings_for_profile(pid))
+    if request.method == 'DELETE':
+        ok = db.delete_holding_for_profile(pid, request.args.get('ticker', ''))
+    else:
+        data = _json_body()
+        if data.get('_bulk'):
+            ok = db.write_holdings_for_profile(pid, data.get('holdings'))
         else:
-            holdings.append(dict(
-                ticker      = ticker,
-                entry_price = float(data.get('entry_price', 0)),
-                shares      = float(data.get('shares', 0)),
-                notes       = str(data.get('notes', '')),
-            ))
-        db.write_holdings_for_profile(pid, holdings)
-        return jsonify({"status": "success"})
-    elif request.method == 'DELETE':
-        ticker = request.args.get('ticker', '').upper()
-        db.delete_holding_for_profile(pid, ticker)
-        return jsonify({"status": "success"})
+            row = {k: v for k, v in data.items() if k != 'profile_id'}
+            ok = db.upsert_holding(pid, row)
+    if not ok:
+        raise db.StorageError('Holdings save failed')
+    _invalidate_portfolio_cache(pid)
+    return jsonify(status='success')
 
 @app.route('/api/backtest/<ticker>')
 def api_backtest(ticker):
@@ -183,7 +293,9 @@ def api_backtest(ticker):
             test_end = end_date.strftime('%Y-%m-%d')
         
         print(f"[BACKTEST] Running for {ticker} from {test_start} to {test_end}")
-        result = run_backtest(ticker.upper(), test_start, test_end, verbose=True)
+        profile = _require_profile(_resolve_profile_id())
+        result = run_backtest(ticker.upper(), test_start, test_end, verbose=True,
+                      min_buy_confidence=float(profile['min_buy_confidence']))
 
         if not result or 'eq' not in result:
             print(f"[BACKTEST] No result for {ticker}")
@@ -221,6 +333,7 @@ def api_backtest(ticker):
                     trade_date = trade_date.strftime('%Y-%m-%d')
                 trades.append({
                     'date': trade_date,
+                    'signal_date': pd.Timestamp(row['signal_date']).strftime('%Y-%m-%d') if pd.notna(row.get('signal_date')) else None,
                     'action': row['action'],
                     'price': float(row['price']),
                     'shares': int(row['shares']),
@@ -283,6 +396,10 @@ def api_backtest(ticker):
             "test_end": test_end,
             "ohlcv": ohlcv,
             "trades": trades,
+            "decisions": result.get('decisions', []),
+            "pending_order": result.get('pending_order'),
+            "strategy_version": result.get('strategy_version'),
+            "execution_model": "Completed close decision; next available session open. Open positions marked, not forced sold.",
             "metrics": {
                 "total_return": round(float(result['total_ret']), 4),
                 "cagr":         round(float(result['cagr']), 4),
@@ -308,16 +425,8 @@ def api_backtest(ticker):
 @app.route('/api/watchlist')
 def api_watchlist():
     """Return the requesting profile's watchlist (falls back to config.toml)."""
-    try:
-        pid = _resolve_profile_id()
-        profiles = db.list_profiles()
-        profile = next((p for p in profiles if p["id"] == pid), None)
-        wl = (profile or {}).get("watchlist") or []
-        if wl:
-            return jsonify({"watchlist": wl})
-        return jsonify({"watchlist": _read_config_watchlist()})
-    except Exception as e:
-        return jsonify({"watchlist": [], "error": str(e)})
+    profile = _require_profile(_resolve_profile_id())
+    return jsonify(watchlist=profile['watchlist'])
 
 @app.route('/api/config/watchlist')
 def api_config_watchlist():
@@ -329,16 +438,7 @@ def api_config_watchlist():
 @app.route('/api/debug/storage')
 def debug_storage():
     """Debug endpoint to check storage status."""
-    return jsonify({
-        "database_url_set": bool(db.DATABASE_URL),
-        "holdings_from_db": db.read_holdings_db() if db.DATABASE_URL else None,
-        "holdings_from_json": _read_holdings_json(),
-        "json_file_exists": os.path.exists(HOLDINGS_PATH),
-        "json_file_path": HOLDINGS_PATH,
-        "portfolio_cache_from_db": db.read_portfolio_cache_db() if db.DATABASE_URL else None,
-        "portfolio_cache_json_exists": os.path.exists(CACHE_PATH),
-        "portfolio_cache_path": CACHE_PATH
-    })
+    return jsonify(database_url_set=bool(db.DATABASE_URL), profiles=len(db.list_profiles()))
 
 
 @app.route('/backtest')
@@ -358,53 +458,33 @@ def api_dashboard_cached():
     """
     pid = _resolve_profile_id()
 
-    def _cache_matches(data: dict) -> bool:
-        return data.get("_profile_id") == pid
-
-    # Try PostgreSQL first
-    if db.DATABASE_URL:
-        cache_data = db.read_portfolio_cache_db()
-        if cache_data and _cache_matches(cache_data):
-            return jsonify({"success": True, "cached": True, "data": cache_data})
-        if cache_data and not _cache_matches(cache_data):
-            return jsonify({"success": False, "cached": False,
-                            "error": "No cache for this profile — click Refresh."})
-
-    # Fallback to JSON file
-    if not os.path.exists(CACHE_PATH):
-        return jsonify({"success": False, "cached": False, "error": "No cache yet — click Refresh to run analysis."})
-
+    fingerprint = _profile_fingerprint(pid)
     try:
-        with open(CACHE_PATH, encoding="utf-8") as f:
-            data = json.load(f)
-        if not _cache_matches(data):
-            return jsonify({"success": False, "cached": False,
-                            "error": "No cache for this profile — click Refresh."})
-        mtime = os.path.getmtime(CACHE_PATH)
-        data["_cache_time"] = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-        return jsonify({"success": True, "cached": True, "data": data})
-    except Exception as e:
-        print(f"[CACHE] Read error: {e}")
-        return jsonify({"success": False, "cached": False, "error": "Cache read failed"})
+        data = analysis_cache.read(pid, _profile_cache_path(pid))
+    except Exception:
+        app.logger.warning('Analysis cache unavailable')
+        data = None
+    if not data or data.get('_profile_id') != pid or data.get('_profile_fingerprint') != fingerprint:
+        return jsonify(success=False, cached=False, error='No current analysis for this profile — click Refresh.')
+    # Session-calendar freshness replaces this conservative UTC date check in
+    # the market-data milestone. For now never silently serve yesterday's run.
+    if data.get('_completed_session') != latest_completed_session() or data.get('strategy_version') != strategy.VERSION:
+        return jsonify(success=False, cached=False, error='Analysis is from an earlier date — click Refresh.')
+    return jsonify(success=True, cached=True, data=data)
 
 
-@app.route('/api/dashboard/refresh')
+@app.route('/api/dashboard/refresh', methods=['POST'])
 def api_dashboard():
     """Run a live portfolio analysis (slow), write cache, return result."""
+    pid = _resolve_profile_id()
+    state = profile_store.snapshot()
+    profile = next((p for p in state['profiles'] if p['id'] == pid), None)
+    if profile is None:
+        raise KeyError('Profile not found')
+    holdings_from_profile = state['holdings'].get(str(pid), [])
+    fingerprint = _profile_fingerprint(pid, state)
+    observed = []
     try:
-        pid     = _resolve_profile_id()
-        profile = db.list_profiles()
-        profile = next((p for p in profile if p["id"] == pid), None) or db.get_active_profile()
-
-        # Sync active-profile holdings to a temp JSON file (main.py reads from file)
-        holdings_from_profile = db.read_holdings_for_profile(pid)
-        holdings_path = os.path.join(_HERE, f"_holdings_profile_{pid}.json")
-        try:
-            with open(holdings_path, "w", encoding="utf-8") as f:
-                json.dump(holdings_from_profile, f, indent=2)
-        except Exception as sync_err:
-            print(f"[DASHBOARD] Warning: Could not write temp holdings file: {sync_err}")
-            holdings_path = HOLDINGS_PATH  # fallback
 
         watchlist   = profile.get("watchlist", [])
         capital     = profile.get("capital") or None
@@ -417,11 +497,15 @@ def api_dashboard():
         warn_hold   = float(profile.get("warn_hold_confidence", 0.40))
 
         data = get_portfolio_data(
-            holdings_csv           = holdings_path,
+            holdings_csv           = '',
+            holdings_rows          = holdings_from_profile,
+            indicator_observer     = observed.append,
             watchlist              = watchlist,
             total_capital          = float(capital) if capital else None,
             max_positions          = max_pos,
             risk_per_trade_pct     = risk_pct,
+            min_profit_for_pyramid = float(profile['min_profit_for_pyramid']) / 100.0,
+            min_cushion_for_pyramid = float(profile['min_cushion_for_pyramid']) / 100.0,
             cash_reserve_pct       = reserve_pct,
             top_signals            = top_n,
             min_buy_confidence     = min_buy,
@@ -431,24 +515,23 @@ def api_dashboard():
         data["_cache_time"]   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         data["_profile_id"]   = pid
         data["_profile_name"] = profile.get("name", "Default")
-
-        # Save to PostgreSQL cache (primary)
-        if db.DATABASE_URL:
-            if db.write_portfolio_cache_db(data):
-                print("[CACHE] ✓ Saved to PostgreSQL")
-            else:
-                print("[CACHE] ⚠ PostgreSQL save failed, trying JSON fallback")
-
-        # Also save to JSON file as backup
+        data['_profile_fingerprint'] = fingerprint
+        data['_analysis_date_utc'] = datetime.now(timezone.utc).date().isoformat()
+        data['_completed_session'] = latest_completed_session()
+        data['strategy_version'] = strategy.VERSION
+        # Reject results if settings/holdings changed during the slow download.
+        if _profile_fingerprint(pid) != fingerprint:
+            return jsonify(success=False, error='Profile changed during analysis; refresh again'), 409
+        signal_history.record_indicators(pid, observed, expected_config_hash=signal_history.config_hash(profile))
         try:
-            os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
-            with open(CACHE_PATH, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-            print("[CACHE] ✓ Saved to JSON file")
-        except Exception as e:
-            print(f"[CACHE] ⚠ JSON save failed: {e}")
+            analysis_cache.write(pid, data, _profile_cache_path(pid))
+        except Exception:
+            app.logger.warning('Analysis completed but disposable cache could not be saved')
+            data['_cache_warning'] = 'Analysis cache could not be saved'
 
         return jsonify({"success": True, "cached": False, "data": data})
+    except (ValueError, KeyError, db.StorageError):
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -467,16 +550,17 @@ def api_profiles():
     if request.method == 'GET':
         return jsonify(db.list_profiles())
     # POST → create new profile
-    data = request.json or {}
-    name = str(data.get('name', '')).strip()
+    data = _json_body()
+    data = validate_settings(data)
+    name = data.get('name', '')
     if not name:
         return jsonify({"error": "Profile name required"}), 400
     existing = [p for p in db.list_profiles() if p['name'].lower() == name.lower()]
     if existing:
         return jsonify({"error": "A profile with that name already exists"}), 409
-    settings = {k: data[k] for k in db.DEFAULT_PROFILE_SETTINGS if k in data}
+    settings = validate_settings({k: data[k] for k in db.DEFAULT_PROFILE_SETTINGS if k in data})
     # Auto-seed watchlist from config.toml if none provided
-    if 'watchlist' not in settings or not settings['watchlist']:
+    if 'watchlist' not in settings:
         settings['watchlist'] = _read_config_watchlist()
     profile = db.create_profile(name, settings)
     if profile is None:
@@ -484,80 +568,190 @@ def api_profiles():
     return jsonify(profile), 201
 
 
+@app.after_request
+def private_responses(response):
+    if request.path.startswith('/api/') or request.endpoint == 'login':
+        response.headers['Cache-Control'] = 'no-store'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    return response
+
+
 @app.route('/api/profiles/active', methods=['GET', 'POST'])
 def api_profiles_active():
     if request.method == 'GET':
         return jsonify(db.get_active_profile())
     # POST → set active profile by id
-    data = request.json or {}
+    data = _json_body()
     pid = data.get('profile_id')
     if pid is None:
         return jsonify({"error": "profile_id required"}), 400
+    if isinstance(pid, bool) or not str(pid).isdigit():
+        raise ValueError('profile_id must be a positive integer')
+    _require_profile(int(pid))
     if not db.set_active_profile(int(pid)):
         return jsonify({"error": "Failed to set active profile"}), 500
-    # Invalidate cache — new profile has different holdings / settings
-    _invalidate_portfolio_cache()
     return jsonify({"status": "ok", "active_profile_id": int(pid)})
 
 
 @app.route('/api/profiles/<int:profile_id>', methods=['PUT', 'DELETE'])
 def api_profile_detail(profile_id):
+    _require_profile(profile_id)
     if request.method == 'PUT':
-        data = request.json or {}
+        data = validate_settings(_json_body())
         if not db.update_profile(profile_id, data):
-            return jsonify({"error": "Update failed"}), 500
-        # Invalidate cache if the active profile's settings changed
-        if profile_id == _get_active_profile_id():
-            _invalidate_portfolio_cache()
+            raise db.StorageError('Profile update failed')
+        _invalidate_portfolio_cache(profile_id)
         return jsonify({"status": "ok"})
     # DELETE
     if len(db.list_profiles()) <= 1:
         return jsonify({"error": "Cannot delete the only profile"}), 400
     if not db.delete_profile(profile_id):
-        return jsonify({"error": "Delete failed"}), 500
+        raise db.StorageError('Profile deletion failed')
+    _invalidate_portfolio_cache(profile_id)
     return jsonify({"status": "ok"})
 
 
 @app.route('/api/profiles/<int:profile_id>/holdings', methods=['GET', 'POST', 'DELETE'])
 def api_profile_holdings(profile_id):
-    if request.method == 'GET':
-        return jsonify(db.read_holdings_for_profile(profile_id))
+    return _holdings_response(profile_id)
+
+
+@app.route('/api/backup/export')
+def api_backup_export():
+    pid = _resolve_profile_id() if 'profile_id' in request.args else None
+    state = profile_store.snapshot()
+    document = backup.export_document(pid, state)
+    session['last_backup_state'] = backup.digest(state)
+    session['last_backup_scope'] = document['scope']
+    session['last_backup_at'] = datetime.now().timestamp()
+    filename = f"tradingui-{'all-profiles' if pid is None else 'profile-' + str(pid)}-{datetime.now():%Y%m%d-%H%M%S}.json"
+    return Response(json.dumps(document, indent=2, allow_nan=False), mimetype='application/json',
+                    headers={'Content-Disposition': f'attachment; filename="{filename}"', 'Cache-Control': 'no-store'})
+
+
+@app.route('/trades')
+def trades_page():
+    return render_template('trades.html')
+
+
+@app.route('/paper')
+def paper_page():
+    return render_template('paper.html')
+
+
+@app.route('/api/profiles/<int:profile_id>/paper',methods=['GET','POST'])
+def api_paper(profile_id):
+    _require_profile(profile_id)
+    if request.method=='GET':return jsonify(paper.status(profile_id))
+    body=_json_body()
+    if set(body)-{'start_date','initial_cash','confirmation'}:raise ValueError('Unknown start fields')
+    reset=body.get('confirmation')=='RESET STRATEGY ACCOUNT'
+    run=paper.start(profile_id,body.get('start_date'),body.get('initial_cash'),reset=reset)
+    return jsonify(run=run),201
+
+
+@app.route('/api/profiles/<int:profile_id>/paper/run',methods=['POST'])
+def api_paper_run(profile_id):
+    body=_json_body()
+    if set(body)-{'end_date','limit'}:raise ValueError('Unknown run fields')
+    return jsonify(paper.catch_up(profile_id,end=body.get('end_date'),limit=body.get('limit',10)))
+
+
+@app.route('/api/profiles/<int:profile_id>/paper/pause',methods=['POST'])
+def api_paper_pause(profile_id):
+    body=_json_body()
+    if set(body)!={'paused'}:raise ValueError('paused required')
+    paper.set_paused(profile_id,body['paused'])
+    return jsonify(success=True)
+
+
+@app.route('/api/profiles/<int:profile_id>/accounts', methods=['GET', 'POST'])
+def api_accounts(profile_id):
+    _require_profile(profile_id)
     if request.method == 'POST':
-        data   = request.json or {}
-        # Bulk replace all holdings at once (used by settings page)
-        if data.get('_bulk'):
-            rows = data.get('holdings', [])
-            db.write_holdings_for_profile(profile_id, rows)
-            # Invalidate cache only if this is the active profile's holdings
-            if profile_id == _get_active_profile_id():
-                _invalidate_portfolio_cache()
-            return jsonify({"status": "ok"})
-        ticker = str(data.get('ticker', '')).strip().upper()
-        if not ticker:
-            return jsonify({"error": "ticker required"}), 400
-        holdings = db.read_holdings_for_profile(profile_id)
-        existing = next((h for h in holdings if h['ticker'] == ticker), None)
-        if existing:
-            existing['entry_price'] = float(data.get('entry_price', existing['entry_price']))
-            existing['shares']      = float(data.get('shares', existing['shares']))
-            existing['notes']       = str(data.get('notes', existing.get('notes', '')))
-        else:
-            holdings.append(dict(
-                ticker=ticker,
-                entry_price=float(data.get('entry_price', 0)),
-                shares=float(data.get('shares', 0)),
-                notes=str(data.get('notes', '')),
-            ))
-        db.write_holdings_for_profile(profile_id, holdings)
-        if profile_id == _get_active_profile_id():
-            _invalidate_portfolio_cache()
-        return jsonify({"status": "ok"})
-    # DELETE
-    ticker = request.args.get('ticker', '').upper()
-    db.delete_holding_for_profile(profile_id, ticker)
-    if profile_id == _get_active_profile_id():
-        _invalidate_portfolio_cache()
-    return jsonify({"status": "ok"})
+        body = _json_body()
+        if set(body) != {'kind'}:
+            raise ValueError('Account creation requires only kind')
+        account, created = ledger.create_account(profile_id, body['kind'], with_status=True)
+        return jsonify(dict({k: v for k, v in account.items() if k != 'events'}, created=created)), 201 if created else 200
+    state = profile_store.snapshot()
+    return jsonify([dict({k: v for k, v in a.items() if k != 'events'}, event_count=len(a['events']))
+                    for a in state.get('accounts', []) if a['profile_id'] == profile_id])
+
+
+@app.route('/api/profiles/<int:profile_id>/accounts/<account_id>/events', methods=['POST'])
+def api_account_events(profile_id, account_id):
+    body = _json_body()
+    if 'events' in body:
+        if set(body) != {'events'}:
+            raise ValueError('Batch submission requires only events')
+        events, count = ledger.add_events(profile_id, account_id, body['events'])
+    else:
+        event, created = ledger.add_event(profile_id, account_id, body)
+        events, count = [event], int(created)
+    return jsonify(events=events, created=count), 201 if count else 200
+
+
+@app.route('/api/profiles/<int:profile_id>/accounts/<account_id>/report', methods=['GET', 'POST'])
+def api_account_report(profile_id, account_id):
+    marks = {}
+    if request.method == 'POST':
+        body = _json_body()
+        if set(body) != {'marks'} or not isinstance(body['marks'], dict) or len(body['marks']) > 1000:
+            raise ValueError('Report body must contain a marks object')
+        from validation import ticker
+        marks = {ticker(k): str(ledger.decimal(v, 'mark', True)) for k, v in body['marks'].items()}
+    result = ledger.report(profile_id, account_id, marks)
+    result['valuation_source'] = 'User supplied quotes; not persisted or independently verified' if marks else 'No quotes supplied'
+    return jsonify(result)
+
+
+@app.route('/api/profiles/<int:profile_id>/signals')
+def api_observed_signals(profile_id):
+    _require_profile(profile_id)
+    symbol = request.args.get('ticker')
+    if symbol is not None:
+        from validation import ticker
+        symbol = ticker(symbol)
+    records = [r for r in profile_store.snapshot().get('signal_history', [])
+               if r['profile_id'] == profile_id and (symbol is None or r['ticker'] == symbol)]
+    return jsonify(records[-500:])
+
+
+@app.route('/api/backup/preview', methods=['POST'])
+def api_backup_preview():
+    body = _json_body()
+    document = body.get('document')
+    summary = backup.preview(document)
+    state_hash = backup.digest(profile_store.snapshot())
+    token = secrets.token_hex(32)
+    session['import_preview'] = dict(token=token, document_hash=backup.digest(document),
+                                     state_hash=state_hash, at=datetime.now().timestamp())
+    return jsonify(summary=summary, preview_token=token)
+
+
+@app.route('/api/backup/import', methods=['POST'])
+def api_backup_import():
+    body = _json_body()
+    document, mode = body.get('document'), body.get('mode', 'new')
+    preview = session.get('import_preview', {})
+    if (not preview or not isinstance(body.get('preview_token'), str)
+            or not hmac.compare_digest(body['preview_token'], preview['token'])
+            or datetime.now().timestamp() - preview['at'] > 1800
+            or backup.digest(document) != preview['document_hash']):
+        raise ValueError('Preview this exact backup before importing; previews expire after 30 minutes')
+    if mode == 'restore':
+        if body.get('confirmation') != 'REPLACE ALL PROFILES':
+            raise ValueError('Explicit replacement confirmation is required')
+        if (session.get('last_backup_state') != preview['state_hash']
+                or datetime.now().timestamp() - session.get('last_backup_at', 0) > 1800):
+            raise ValueError('Download a current all-profiles backup before replacing profiles')
+        if session.get('last_backup_scope') != 'all_profiles':
+            raise ValueError('Download an all-profiles backup before replacement')
+    result = backup.import_document(document, mode, expected_state=preview['state_hash'])
+    session.pop('import_preview', None)
+    return jsonify(success=True, **result)
 
 
 if __name__ == '__main__':

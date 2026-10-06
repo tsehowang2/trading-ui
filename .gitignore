@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+.env
+data_cache/
+profiles_state.json
+profiles_state.json.lock
+profiles.json
+active_profile.json
+holdings_*.json
+_holdings_profile_*.json
+results/portfolio_cache*.json

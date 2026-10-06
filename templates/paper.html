@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Strategy Paper Account{% endblock %}
+{% block page_title %}Strategy Paper Account{% endblock %}
+{% block content %}
+<div class="container-fluid">
+<div class="alert alert-info small">Independent strategy simulation, not your real portfolio. Historical sessions and fills are retrospective models. No broker connection. Prices use Yahoo's split-adjusted synthetic-share scale.</div>
+<div id="paperMessage" role="status" class="mb-3"></div>
+<div class="card bg-dark border-secondary p-3 mb-3">
+<div class="row g-3">
+<div class="col-md-3"><label for="paperProfile">Profile / watchlist</label><select id="paperProfile" class="form-select" onchange="selectPaperProfile()"></select></div>
+<div class="col-md-3"><label for="paperStart">Start date</label><input id="paperStart" class="form-control" type="date" min="1990-01-01"></div>
+<div class="col-md-3"><label for="paperCash">Initial cash ($)</label><input id="paperCash" class="form-control" type="number" min="1" step="1" value="10000"></div>
+<div class="col-md-3 d-flex align-items-end"><button class="btn btn-outline-success" onclick="startPaper()">Start / reset simulation</button></div>
+</div>
+<p class="small text-secondary mt-3 mb-0">Start date is chosen at runtime; weekends shift to the next trading session. The selected watchlist and risk settings are frozen for this run. Old starts require available stock history, ~200 sessions of warmup and SPY/VIX/VIX3M coverage. Missing data pauses catch-up. Reset replaces only this strategy account's history—download a backup first.</p>
+</div>
+<div class="card bg-dark border-secondary p-3 mb-3">
+<div class="d-flex gap-3 flex-wrap align-items-end">
+<div><label for="paperEnd">Catch up through (blank = latest completed session)</label><input id="paperEnd" class="form-control" type="date"></div>
+<button id="paperRunBtn" class="btn btn-outline-primary" onclick="runPaper()">Run / catch up</button>
+<button class="btn btn-outline-secondary" onclick="pausePaper()">Pause / resume</button>
+<button class="btn btn-outline-secondary" onclick="loadPaper()">Reload status</button>
+</div></div>
+<div id="paperSummary" class="row g-3 mb-3"></div>
+<p id="paperRunInfo" class="small text-secondary"></p>
+<div class="card bg-dark border-secondary p-3 mb-3"><h5>Positions</h5><div class="table-responsive"><table class="table table-dark table-sm"><thead><tr><th>Ticker</th><th>Shares</th><th>Cost</th><th>Quote</th><th>Unrealized P&L</th></tr></thead><tbody id="paperPositions"></tbody></table></div></div>
+<div class="card bg-dark border-secondary p-3 mb-3"><h5>Pending next-session orders</h5><div class="table-responsive"><table class="table table-dark table-sm"><thead><tr><th>Signal session</th><th>Ticker</th><th>Action</th><th>Shares</th><th>Reason</th></tr></thead><tbody id="paperPending"></tbody></table></div></div>
+<div class="card bg-dark border-secondary p-3 mb-3"><h5>Modeled fills / rejections</h5><div class="table-responsive"><table class="table table-dark table-sm"><thead><tr><th>Signal</th><th>Fill session</th><th>Ticker</th><th>Action</th><th>Status</th><th>Shares</th><th>Price</th><th>Reason</th></tr></thead><tbody id="paperOrders"></tbody></table></div></div>
+<div class="card bg-dark border-secondary p-3 mb-3"><h5>Daily equity history</h5><div class="table-responsive"><table class="table table-dark table-sm"><thead><tr><th>Session</th><th>Cash</th><th>Equity</th><th>Profit</th><th>Drawdown</th><th>Declined candidates</th></tr></thead><tbody id="paperHistory"></tbody></table></div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let paperState=null,paperBusy=false;
+const pe=id=>document.getElementById(id);
+const pescape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pmoney=v=>v==null?'Unpriced':Number(v).toLocaleString('en-US',{style:'currency',currency:'USD'});
+function paperUrl(){return `/api/profiles/${pe('paperProfile').value}/paper`;}
+function pmessage(text,error=false){pe('paperMessage').textContent=text;pe('paperMessage').className=error?'mb-3 text-danger':'mb-3 text-info';}
+async function pfetch(url,body){const r=await fetch(url,body===undefined?undefined:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data;}
+async function initPaper(){try{const profiles=await pfetch('/api/profiles');pe('paperProfile').innerHTML=profiles.map(p=>`<option value="${p.id}">${pescape(p.name)}</option>`).join('');const saved=localStorage.getItem('tradingUiProfileId');if(profiles.some(p=>String(p.id)===saved))pe('paperProfile').value=saved;pe('paperStart').value=new Date().toISOString().slice(0,10);await loadPaper();if(paperState?.run&&!paperState.run.paused)await runPaper();}catch(e){pmessage(e.message,true);}}
+async function selectPaperProfile(){if(paperBusy)return;localStorage.setItem('tradingUiProfileId',pe('paperProfile').value);await loadPaper();}
+async function startPaper(){if(paperBusy)return;try{
+  let confirmation;
+  if(paperState?.run){confirmation=prompt('Download a backup in Settings first. Reset deletes this strategy account events/orders/history and starts with the current watchlist/settings. Type RESET STRATEGY ACCOUNT.');if(confirmation!=='RESET STRATEGY ACCOUNT')return;}
+  await pfetch(paperUrl(),{start_date:pe('paperStart').value,initial_cash:pe('paperCash').value,confirmation});await loadPaper();await runPaper();
+}catch(e){pmessage(e.message,true);}}
+async function pausePaper(){if(!paperState?.run||paperBusy)return;try{await pfetch(paperUrl()+'/pause',{paused:!paperState.run.paused});await loadPaper();}catch(e){pmessage(e.message,true);}}
+async function runPaper(){if(paperBusy||!paperState?.run)return;paperBusy=true;pe('paperRunBtn').disabled=true;pe('paperProfile').disabled=true;const url=paperUrl();
+try{for(let chunks=0;chunks<1000;chunks++){
+ pmessage('Processing completed sessions in chronological order…');const result=await pfetch(url+'/run',{limit:10,...(pe('paperEnd').value?{end_date:pe('paperEnd').value}:{})});
+ await loadPaper();if(result.error){pmessage(`Stopped at ${result.blocked_session}: ${result.error}. Saved earlier sessions are retained.`,true);return;}
+ if(result.paused||!result.remaining){pmessage(result.paused?'Simulation paused.':'Caught up. Last-close orders wait for a following completed session.');return;}
+ if(result.processed===0){pmessage('Another run progressed or processing paused; reload to continue.');return;}
+}pmessage('Chunk limit reached; press Run to continue.');}catch(e){pmessage(e.message+' — saved checkpoint will resume on the next run.',true);}finally{paperBusy=false;pe('paperRunBtn').disabled=false;pe('paperProfile').disabled=false;}}
+async function loadPaper(){paperState=await pfetch(paperUrl());const run=paperState.run;const cells=values=>'<tr>'+values.map(v=>'<td>'+pescape(v)+'</td>').join('')+'</tr>';
+if(!run){if(!pe('paperStart').dataset.userEdited)pe('paperStart').value=paperState.latest_completed_session;pe('paperSummary').innerHTML='';pe('paperRunInfo').textContent='No automatic strategy run yet. Choose start date and cash, then Start.';['paperPositions','paperPending','paperOrders','paperHistory'].forEach(id=>pe(id).innerHTML='');return;}
+const r=paperState.report,last=run.history.at(-1);pe('paperSummary').innerHTML=[['Cash',r.cash],['Equity',r.equity],['Net profit',r.net_profit],['Realized',r.realized_pnl]].map(([label,value])=>`<div class="col-6 col-md-3"><div class="card bg-dark border-secondary p-3"><small>${label}</small><strong>${pmoney(value)}</strong></div></div>`).join('');
+pe('paperRunInfo').textContent=`Start ${run.start_date}; checkpoint ${run.checkpoint||'not processed'}; ${run.paused?'paused':'enabled'}; frozen universe ${run.config.watchlist.join(', ')}; max positions ${run.config.max_positions}; reserve ${run.config.cash_reserve_pct}%. ${run.price_model}.`;
+pe('paperPositions').innerHTML=r.positions.map(p=>cells([p.ticker,p.shares,pmoney(p.cost_basis),pmoney(p.mark),pmoney(p.unrealized_pnl)])).join('');
+pe('paperPending').innerHTML=run.pending.map(o=>cells([o.signal_session,o.ticker,o.action,o.shares,o.reason])).join('');
+pe('paperOrders').innerHTML=run.orders.slice(-100).reverse().map(o=>cells([o.signal_session,o.fill_session,o.ticker,o.action,o.status,o.filled_shares,pmoney(o.fill_price),o.reason+' / '+o.fill_reason])).join('');
+pe('paperHistory').innerHTML=run.history.slice(-100).reverse().map(h=>cells([h.session,pmoney(h.cash),pmoney(h.equity),pmoney(h.net_profit),(h.drawdown*100).toFixed(2)+'%',h.rejected.map(x=>x.ticker+': '+x.reason).join('; ')])).join('');
+}
+pe('paperStart').addEventListener('input',()=>pe('paperStart').dataset.userEdited='true');
+initPaper();
+</script>
+{% endblock %}

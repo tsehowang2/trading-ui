@@ -636,7 +636,7 @@
 
     <div class="dash-section mt-3" id="trendSection" style="display:none">
       <h5><i class="fas fa-fire-alt"></i>Top Trending <span id="trendCount" class="dim"></span>
-        <small class="ms-2 dim" style="font-size:.65rem;font-weight:400;text-transform:none;letter-spacing:0;">Above SMA200 · signal fired &gt;5 days ago or conditions not fully met · still tradeable on pullback</small>
+        <small class="ms-2 dim" style="font-size:.65rem;font-weight:400;text-transform:none;letter-spacing:0;">Above SMA200 · persistent eligibility or incomplete gates · trend age is not an observed signal date</small>
       </h5>
       <div id="trendContent"></div>
     </div>
@@ -936,6 +936,11 @@ function buildTipRows(d) {
 
 // ── Render ───────────────────────────────────────────────────────────────────
 function render(d, cached) {
+  if (d.position_state_notice) {
+    let notice = document.getElementById('positionStateNotice');
+    if (!notice) { notice = document.createElement('p'); notice.id = 'positionStateNotice'; notice.className = 'alert alert-warning small'; document.querySelector('.content').prepend(notice); }
+    notice.textContent = d.position_state_notice;
+  }
   // Populate tooltip data store for this render
   _tipData = {
     held:     d.held     || [],
@@ -1175,7 +1180,7 @@ async function loadLive() {
   $('refreshBtn').innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Running…';
   const pid = getProfileId();
   try {
-    const json = await (await fetch(`/api/dashboard/refresh?profile_id=${pid || ''}`)).json();
+    const json = await (await fetch(`/api/dashboard/refresh?profile_id=${pid || ''}`, {method: 'POST'})).json();
     if (!json.success) throw new Error(json.error);
     render(json.data, false);
   } catch(e) {

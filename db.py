@@ -29,6 +29,7 @@ def init_db():
             return False
         
         with conn.cursor() as cur:
+            cur.execute('SELECT pg_advisory_xact_lock(74629101)')
             # Holdings table
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS holdings (
@@ -243,6 +244,7 @@ DEFAULT_PROFILE_SETTINGS: dict = {
 def _init_profile_tables(conn) -> None:
     """Create profile-related tables and migrate holdings schema."""
     with conn.cursor() as cur:
+        cur.execute('SELECT pg_advisory_xact_lock(74629101)')
         # Profiles table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS profiles (
@@ -277,7 +279,8 @@ def _init_profile_tables(conn) -> None:
         # Migration: add profile_id to holdings if not present
         cur.execute("""
             SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'holdings' AND column_name = 'profile_id'
+                        WHERE table_schema = current_schema()
+                            AND table_name = 'holdings' AND column_name = 'profile_id'
         """)
         if not cur.fetchone():
             cur.execute("ALTER TABLE holdings ADD COLUMN profile_id INT")
@@ -636,17 +639,17 @@ def _profile_row_to_dict(row, active_id: int) -> dict:
     return {
         "id":                      int(row["id"]),
         "name":                    str(row["name"]),
-        "capital":                 float(row["capital"] or 12000),
+        "capital":                 float(row["capital"] if row["capital"] is not None else 12000),
         "max_positions":           int(row["max_positions"] or 10),
         "watchlist":               list(row["watchlist"] or []),
         "risk_per_trade_pct":      float(row["risk_per_trade_pct"] or 2.0),
-        "min_profit_for_pyramid":  float(row["min_profit_for_pyramid"] or 5.0),
-        "min_cushion_for_pyramid": float(row["min_cushion_for_pyramid"] or 8.0),
-        "cash_reserve_pct":        float(row["cash_reserve_pct"] or 10.0),
+        "min_profit_for_pyramid":  float(row["min_profit_for_pyramid"] if row["min_profit_for_pyramid"] is not None else 5.0),
+        "min_cushion_for_pyramid": float(row["min_cushion_for_pyramid"] if row["min_cushion_for_pyramid"] is not None else 8.0),
+        "cash_reserve_pct":        float(row["cash_reserve_pct"] if row["cash_reserve_pct"] is not None else 10.0),
         "top_signals":             int(row["top_signals"] or 5),
-        "min_buy_confidence":      float(row["min_buy_confidence"] or 0.60),
-        "min_pyramid_confidence":  float(row["min_pyramid_confidence"] or 0.65),
-        "warn_hold_confidence":    float(row["warn_hold_confidence"] or 0.40),
+        "min_buy_confidence":      float(row["min_buy_confidence"] if row["min_buy_confidence"] is not None else 0.60),
+        "min_pyramid_confidence":  float(row["min_pyramid_confidence"] if row["min_pyramid_confidence"] is not None else 0.65),
+        "warn_hold_confidence":    float(row["warn_hold_confidence"] if row["warn_hold_confidence"] is not None else 0.40),
         "is_active":               (int(row["id"]) == active_id),
     }
 
@@ -658,12 +661,24 @@ if DATABASE_URL:
         try:
             _conn = get_connection()
             _init_profile_tables(_conn)
+            from migrations import migrate
+            migrate(_conn)
             _conn.close()
             print("[DB] ✓ Profile tables ready")
         except Exception as _e:
+            if '_conn' in globals() and _conn is not None:
+                _conn.close()
             print(f"[DB] ✗ Profile table init failed: {_e}")
         print("[DB] ✓ Ready")
     else:
-        print("[DB] ✗ Initialization failed, will fall back to JSON")
+        print("[DB] ✗ Initialization failed; configured PostgreSQL remains authoritative")
 else:
     print("[DB] No DATABASE_URL — using JSON file storage")
+
+    # Compatibility facade: all application profile writes share one transaction
+    # boundary. Legacy single-table functions above remain for old CLI consumers.
+    from profile_store import (list_profiles, get_active_profile_id, get_active_profile,
+                   set_active_profile, create_profile, update_profile,
+                   delete_profile, read_holdings_for_profile,
+                   write_holdings_for_profile, delete_holding_for_profile,
+                   upsert_holding, StorageError)

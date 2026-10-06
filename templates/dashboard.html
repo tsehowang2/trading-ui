@@ -241,6 +241,11 @@ function toggleNoSignal() {
 
 // ── Render ─────────────────────────────────────────────────────────────────
 function render(d, cached) {
+  if (d.position_state_notice) {
+    let notice = document.getElementById('positionStateNotice');
+    if (!notice) { notice = document.createElement('p'); notice.id = 'positionStateNotice'; notice.className = 'alert alert-warning small'; document.querySelector('.content').prepend(notice); }
+    notice.textContent = d.position_state_notice;
+  }
   const cacheTime = d._cache_time || d.date;
   $('dashDate').textContent = `Portfolio as of ${d.date}  ·  updated ${cacheTime}`;
   if (cached) {
@@ -430,7 +435,8 @@ async function loadCached() {
   $('dashContent').style.display = 'none';
   $('lowCashAlert').classList.remove('show');
   try {
-    const res  = await fetch('/api/dashboard/cached');
+    const pid = localStorage.getItem('tradingUiProfileId');
+    const res  = await fetch('/api/dashboard/cached' + (pid ? '?profile_id=' + encodeURIComponent(pid) : ''));
     const json = await res.json();
     if (json.success) {
       render(json.data, true);
@@ -455,7 +461,8 @@ async function loadLive() {
   $('refreshBtn').disabled = true;
   $('refreshBtn').innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> Running…';
   try {
-    const res  = await fetch('/api/dashboard/refresh');
+    const pid = localStorage.getItem('tradingUiProfileId');
+    const res  = await fetch('/api/dashboard/refresh' + (pid ? '?profile_id=' + encodeURIComponent(pid) : ''), {method: 'POST'});
     const json = await res.json();
     if (!json.success) throw new Error(json.error);
     render(json.data, false);

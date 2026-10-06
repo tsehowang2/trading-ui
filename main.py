@@ -62,11 +62,10 @@ ENTRY RULES
 
 EXIT MODEL
 ----------
-  trail-close  Close <= stop level → fill at NEXT-bar open  (end-of-day signal).
-  trail-stop   Low  <= stop level but close above → fill at STOP LEVEL same bar
-               (simulates a resting stop order; avoids the intraday-trigger /
-                next-open fill inconsistency of the old trail-low model).
-  crash        Triple-condition panic → fill at NEXT-bar open.
+    Active v3: close-only ratcheted stop / crash → NEXT-session open.
+    Same-bar low-stop execution is disabled. Last-close orders remain pending.
+    VIX term structure uses same-session VIX/VIX3M, not a 5-day VIX change.
+    Legacy function bodies below are retained as inactive reference only.
 """
 from __future__ import annotations
 
@@ -224,7 +223,7 @@ def _bmark_voo_lumpsum(test_start: str, test_end: str,
         return pd.Series(dtype=float)
     if isinstance(raw.columns, pd.MultiIndex):
         raw.columns = raw.columns.get_level_values(0)
-    c = raw["Close"].ffill().bfill()
+    c = raw["Close"].dropna()
     ts, te = pd.to_datetime(test_start), pd.to_datetime(test_end)
     c = c.loc[(c.index >= ts) & (c.index <= te)]
     return c / float(c.iloc[0]) * capital
@@ -248,7 +247,7 @@ def _bmark_dca_voo(test_start: str, test_end: str,
         return pd.Series(dtype=float)
     if isinstance(raw.columns, pd.MultiIndex):
         raw.columns = raw.columns.get_level_values(0)
-    voo_c = raw["Close"].ffill().bfill()
+    voo_c = raw["Close"].dropna()
     ts, te = pd.to_datetime(test_start), pd.to_datetime(test_end)
     voo_c = voo_c.loc[(voo_c.index >= ts) & (voo_c.index <= te)]
     if voo_c.empty:
@@ -292,7 +291,7 @@ def _bmark_random_entry(test_start: str, test_end: str,
         return 0.0, 0.0
     if isinstance(raw.columns, pd.MultiIndex):
         raw.columns = raw.columns.get_level_values(0)
-    c = raw["Close"].ffill().bfill()
+    c = raw["Close"].dropna()
     ts, te = pd.to_datetime(test_start), pd.to_datetime(test_end)
     c = c.loc[(c.index >= ts) & (c.index <= te)]
     if len(c) < max_entry_day + 2:
@@ -316,13 +315,13 @@ def _bmark_inv_vol_voo(test_start: str, test_end: str,
     for r in (voo_raw, vix_raw):
         if isinstance(r.columns, pd.MultiIndex):
             r.columns = r.columns.get_level_values(0)
-    voo_c = voo_raw["Close"].ffill().bfill()
-    vix_c = vix_raw["Close"].ffill().bfill()
+    voo_c = voo_raw["Close"].dropna()
+    vix_c = vix_raw["Close"].dropna()
     ts, te = pd.to_datetime(test_start), pd.to_datetime(test_end)
     idx = voo_c.index.intersection(vix_c.index)
     idx = idx[(idx >= ts) & (idx <= te)]
     voo_c = voo_c.reindex(idx)
-    vix_c = vix_c.reindex(idx).ffill().bfill()
+    vix_c = vix_c.reindex(idx)
     rebal_dates = set(_monthly_firsts(idx))
     cash   = capital
     shares = 0.0
@@ -350,8 +349,8 @@ def _bmark_6040(test_start: str, test_end: str,
     for r in (voo_r, tlt_r):
         if isinstance(r.columns, pd.MultiIndex):
             r.columns = r.columns.get_level_values(0)
-    voo_c = voo_r["Close"].ffill().bfill()
-    tlt_c = tlt_r["Close"].ffill().bfill()
+    voo_c = voo_r["Close"].dropna()
+    tlt_c = tlt_r["Close"].dropna()
     ts, te = pd.to_datetime(test_start), pd.to_datetime(test_end)
     idx = voo_c.index.intersection(tlt_c.index)
     idx = idx[(idx >= ts) & (idx <= te)]
@@ -372,7 +371,7 @@ def _bmark_6040(test_start: str, test_end: str,
 # ------------------------------------------------------------------------------
 # CORE BACKTEST
 # ------------------------------------------------------------------------------
-def run_backtest(symbol: str, test_start: str, test_end: str,
+def _legacy_run_backtest(symbol: str, test_start: str, test_end: str,
                  verbose: bool = True) -> dict:
     ts = pd.to_datetime(test_start)
     te = pd.to_datetime(test_end)
@@ -682,6 +681,35 @@ def run_backtest(symbol: str, test_start: str, test_end: str,
 # ------------------------------------------------------------------------------
 # SAVE RESULTS
 # ------------------------------------------------------------------------------
+def run_backtest(symbol: str, test_start: str, test_end: str,
+                 verbose: bool = True, min_buy_confidence: float = MIN_BUY_CONFIDENCE,
+                 liquidate: bool = False) -> dict:
+    """v3 shared close-only engine; old implementation is not an active path."""
+    import strategy
+    from market_sessions import latest_completed_session, session_on_or_before, session_dates
+    end = min(session_on_or_before(test_end), latest_completed_session())
+    frame = strategy.load_frame(symbol.upper(), end, cached_download)
+    if frame.empty:
+        return {}
+    window = frame.loc[(frame.index >= pd.Timestamp(test_start)) & (frame.index <= pd.Timestamp(end))]
+    expected = session_dates(test_start, end)
+    if window.empty or not expected.isin(window.index).all():
+        raise ValueError('Missing stock sessions in backtest window; cannot infer next-open fills')
+    if not bool(window['ready'].any()):
+        raise ValueError('No usable SPY/VIX/VIX3M observations or insufficient strategy warmup')
+    config = strategy.StrategyConfig(min_buy_confidence=min_buy_confidence, commission=COMMISSION)
+    result = strategy.replay(frame, test_start, end, INITIAL_CAPITAL, config, liquidate=liquidate)
+    eq = result['eq']
+    result.update(symbol=symbol, test_start=test_start, test_end=end,
+                  total_ret=float(eq.iloc[-1] / INITIAL_CAPITAL - 1),
+                  cagr=_cagr(eq) if len(eq)>1 else 0.0, sharpe=_sharpe(eq), mdd=_mdd(eq),
+                  tpm=sum(t['action'].startswith('SELL') for t in result['tlog'].to_dict('records')) / max((pd.Timestamp(end)-pd.Timestamp(test_start)).days/30.44, 1),
+                  n_trades=len(result['tlog']))
+    if verbose:
+        print(f"  [{symbol}] {strategy.VERSION} ret={result['total_ret']:+.1%}; open positions marked, last-close orders pending")
+    return result
+
+
 def save_results(result: dict, name: str) -> None:
     out_dir = os.path.join(RESULTS_DIR, name)
     os.makedirs(out_dir, exist_ok=True)
@@ -704,7 +732,7 @@ def save_results(result: dict, name: str) -> None:
         raw = cached_download(sym, test_start, test_end)
         if isinstance(raw.columns, pd.MultiIndex):
             raw.columns = raw.columns.get_level_values(0)
-        bnh_price = raw["Close"].reindex(eq.index).ffill().bfill()
+        bnh_price = raw["Close"].reindex(eq.index).dropna()
         bnh_eq    = bnh_price / float(bnh_price.iloc[0]) * start_cap
     except Exception:
         bnh_eq = pd.Series(dtype=float)
@@ -1024,7 +1052,7 @@ def run_random_universe(n_stocks: int, n_trials: int,
 # ------------------------------------------------------------------------------
 # LIVE INDICATOR HELPER  (shared by run_signal and run_portfolio)
 # ------------------------------------------------------------------------------
-def _get_live_indicators(symbol: str) -> dict | None:
+def _legacy_get_live_indicators(symbol: str, min_buy_confidence: float = MIN_BUY_CONFIDENCE) -> dict | None:
     """
     Download latest data for a symbol and compute all v2.9 indicators.
     Returns a dict of values needed for entry/exit decisions, or None on error.
@@ -1188,7 +1216,7 @@ def _get_live_indicators(symbol: str) -> dict | None:
     adx14       = float(df["adx14"].iloc[-1]) if "adx14" in df.columns else 0.0
     sma200_dist = (close / sma200 - 1.0) if sma200 > 0 else 0.0
     score       = _bar_confidence(rs_vs_spy, adx14, sma200_dist)
-    conf_ok     = score >= MIN_BUY_CONFIDENCE
+    conf_ok     = score >= min_buy_confidence
 
     if normal_ok and rs_ok and vol_ok and two_bar_live and conf_ok:
         entry_gate   = "normal-gate"
@@ -1213,7 +1241,7 @@ def _get_live_indicators(symbol: str) -> dict | None:
         if not vol_ok:
             reasons.append("low vol")
         if not conf_ok:
-            reasons.append(f"confidence {score:.2f} < {MIN_BUY_CONFIDENCE:.2f}")
+            reasons.append(f"confidence {score:.2f} < {min_buy_confidence:.2f}")
         entry_reason = "NO ENTRY — " + ", ".join(reasons)
     rebound = (close - float(cur["low90"])) / float(cur["low90"]) if float(cur["low90"]) > 0 else 0.0
 
@@ -1258,6 +1286,26 @@ def _get_live_indicators(symbol: str) -> dict | None:
 # ------------------------------------------------------------------------------
 # LIVE SIGNAL (--signal mode)
 # ------------------------------------------------------------------------------
+def _get_live_indicators(symbol: str, min_buy_confidence: float = MIN_BUY_CONFIDENCE,
+                         as_of: str | None = None) -> dict | None:
+    import strategy
+    from market_sessions import latest_completed_session
+    end = min(as_of or latest_completed_session(), latest_completed_session())
+    frame = strategy.load_frame(symbol.upper(), end, cached_download, live=True)
+    if frame.empty or frame.index[-1].strftime('%Y-%m-%d') != end:
+        return None
+    ind = strategy.snapshot(frame, strategy.StrategyConfig(min_buy_confidence=min_buy_confidence))
+    if ind is None:
+        return None
+    # Eligibility transition, not days above SMA200 and not an invented past fill.
+    previous = strategy.snapshot(frame.iloc[:-1], strategy.StrategyConfig(min_buy_confidence=min_buy_confidence))
+    ind['fresh_entry'] = bool(ind['entry_ok'] and previous is not None and not previous['entry_ok'])
+    ind['symbol'] = symbol.upper()
+    ind['input_revision'] = strategy.frame_revision(frame)
+    ind['df'] = frame
+    return ind
+
+
 def run_signal(symbol: str, entry_price: float | None = None) -> None:
     ind = _get_live_indicators(symbol)
     if ind is None:
@@ -1378,8 +1426,6 @@ def run_signal(symbol: str, entry_price: float | None = None) -> None:
             print(f"  ACTION:  *** SELL NOW — crash exit triggered ***")
         elif close <= personal_stop:
             print(f"  ACTION:  *** SELL NOW — trailing stop hit on close ***")
-        elif ind["cur_low"] <= personal_stop:
-            print(f"  ACTION:  *** SELL — today's low breached trail-stop (fill ~${personal_stop:.2f}) ***")
         else:
             print(f"  ACTION:  HOLD  "
                   f"(stop at ${personal_stop:.2f}, "
@@ -1542,7 +1588,7 @@ def run_portfolio(holdings_csv: str,
     indicators: dict[str, dict | None] = {}
     for t in all_tickers:
         print(f"    {t}…", end=" ", flush=True)
-        indicators[t] = _get_live_indicators(t)
+        indicators[t] = _get_live_indicators(t, min_buy_confidence=min_buy_confidence)
         status = indicators[t]["date"] if indicators[t] else "ERROR"
         print(status)
 
@@ -1635,9 +1681,6 @@ def run_portfolio(holdings_csv: str,
             action_flag = "SELL"
         elif close <= personal_stop:
             action      = "SELL *** STOP HIT (close) ***"
-            action_flag = "SELL"
-        elif ind["cur_low"] <= personal_stop:
-            action      = "SELL AT OPEN *** LOW breached stop ***"
             action_flag = "SELL"
         elif entry_ok and profitable and cushion_ok:
             action      = f"HOLD  [PYRAMID OK — {dist_to_stop:.0%} cushion]"
@@ -2074,12 +2117,14 @@ def get_portfolio_data(holdings_csv: str,
                        top_signals: int = 5,
                        min_buy_confidence: float = MIN_BUY_CONFIDENCE,
                        min_pyramid_confidence: float = MIN_PYRAMID_CONFIDENCE,
-                       warn_hold_confidence: float = WARN_HOLD_CONFIDENCE) -> dict:
+                       warn_hold_confidence: float = WARN_HOLD_CONFIDENCE,
+                       holdings_rows: list[dict] | None = None,
+                       indicator_observer=None) -> dict:
     """
     Same logic as run_portfolio() but returns a structured dict for the
     Flask dashboard API instead of printing to stdout.
     """
-    holdings     = _load_holdings(holdings_csv)
+    holdings     = holdings_rows if holdings_rows is not None else _load_holdings(holdings_csv)
     held_tickers = {h["ticker"] for h in holdings}
 
     all_tickers: list[str] = []
@@ -2091,7 +2136,9 @@ def get_portfolio_data(holdings_csv: str,
 
     indicators: dict[str, dict | None] = {}
     for t in all_tickers:
-        indicators[t] = _get_live_indicators(t)
+        indicators[t] = _get_live_indicators(t, min_buy_confidence=min_buy_confidence)
+        if indicator_observer is not None:
+            indicator_observer(indicators[t])
 
     holdings_value = 0.0
     for h in holdings:
@@ -2108,7 +2155,8 @@ def get_portfolio_data(holdings_csv: str,
 
     risk_dollars  = portfolio_value * (risk_per_trade_pct / 100.0)
     cash_reserve  = portfolio_value * cash_reserve_pct
-    date_str      = datetime.now().strftime("%Y-%m-%d")
+    from market_sessions import latest_completed_session
+    date_str      = latest_completed_session()
 
     def _risk_shares(close: float, atr_frac: float):
         stop_dist = close * atr_frac
@@ -2159,8 +2207,6 @@ def get_portfolio_data(holdings_csv: str,
             action_flag = "SELL"; action = "SELL *** CRASH EXIT ***"
         elif close <= personal_stop:
             action_flag = "SELL"; action = "SELL *** STOP HIT ***"
-        elif ind["cur_low"] <= personal_stop:
-            action_flag = "SELL"; action = "SELL — LOW breached stop"
         elif entry_ok and profitable and cushion_ok:
             action_flag = "HOLD+"; action = f"HOLD — PYRAMID OK ({dist_to_stop:.0%} cushion)"
         elif not ind["above_sma200"]:
@@ -2209,9 +2255,8 @@ def get_portfolio_data(holdings_csv: str,
         if action_flag == "HOLD+":
             pyramid_cands.append(dict(ind=ind, row=row))
 
-    # How many consecutive days above SMA200 marks a signal as "fresh" (not already deep in trend)
-    # The backtest fires a BUY the first time consec_above200 hits 2; beyond ~5 bars the entry is stale.
-    FRESH_SIGNAL_BARS = 5
+    # Fresh means all gates transitioned false -> true on this close.
+    # Trend age is not the date of an observed alert or account execution.
 
     # ── Watchlist screening ───────────────────────────────────────────────────
     new_signals:      list[dict] = []
@@ -2225,11 +2270,11 @@ def get_portfolio_data(holdings_csv: str,
         if ind is None:
             no_signals.append(dict(ticker=ticker_u, reason="data error"))
             continue
-        if ind["entry_ok"] and ind.get("consec_above_sma200", 99) <= FRESH_SIGNAL_BARS:
-            # Fresh breakout: entry conditions just triggered (backtest would show BUY this week)
+        if ind["entry_ok"] and ind.get("fresh_entry", False):
+            # Fresh eligibility; an account buy still depends on position state.
             new_signals.append(ind)
         elif ind["above_sma200"]:
-            # Already in trend OR entry conditions met but signal fired days/weeks ago
+            # Existing trend/persistent eligibility; no invented historical alert.
             trending_signals.append(ind)
         else:
             no_signals.append(dict(ticker=ticker_u,
@@ -2318,8 +2363,8 @@ def get_portfolio_data(holdings_csv: str,
         consec = ind_t.get("consec_above_sma200", 0)
         entry_ok_t = ind_t["entry_ok"]
         # Build a human-readable note about why it's trending vs fresh signal
-        if entry_ok_t and consec > FRESH_SIGNAL_BARS:
-            trend_note = f"entry conditions met but signal fired ~{consec}d ago — still buyable"
+        if entry_ok_t:
+            trend_note = "entry conditions currently met; trend age is not a recorded signal date"
         elif not ind_t["above_sma50"] and ind_t["above_sma200"]:
             trend_note = ind_t["entry_reason"].replace("NO ENTRY — ", "")
         else:
@@ -2400,6 +2445,8 @@ def get_portfolio_data(holdings_csv: str,
 
     result = dict(
         date            = date_str,
+        strategy_version = __import__('strategy').VERSION,
+        position_state_notice = 'Legacy holdings: entry dates, peaks and cooldowns are estimated; account-state parity is not guaranteed.',
         portfolio_value = round(portfolio_value, 2),
         holdings_value  = round(holdings_value, 2),
         cash            = round(cash, 2),
@@ -2430,13 +2477,7 @@ def get_portfolio_data(holdings_csv: str,
         top_signals     = top_signals,
     )
 
-    # ── Write portfolio cache for GUI ────────────────────────────────────────
-    import json as _json
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-    cache_path = os.path.join(RESULTS_DIR, "portfolio_cache.json")
-    with open(cache_path, "w", encoding="utf-8") as _f:
-        _json.dump(result, _f, default=str)
-
+    # Cache persistence belongs to the caller; never overwrite another profile.
     return result
 
 # ------------------------------------------------------------------------------
