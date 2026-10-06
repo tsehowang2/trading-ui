@@ -69,3 +69,67 @@ def test_portfolio_calculation_does_not_write_shared_cache(client, tmp_path):
         result = main.get_portfolio_data('', [], 1000, holdings_rows=[])
     assert result['held'] == []
     assert not (tmp_path / 'results' / 'portfolio_cache.json').exists()
+
+
+def test_real_refresh_reuses_benchmarks_and_saved_market_data(client, profile, tmp_path, monkeypatch):
+    import pandas as pd
+    import data
+    import market_cache
+    import market_sessions
+    from test_market_data import bars
+
+    end = '2025-07-07'
+    monkeypatch.setattr(data, 'DATA_CACHE_DIR', str(tmp_path / 'market'))
+    monkeypatch.setattr(data, 'latest_completed_session', lambda: end)
+    monkeypatch.setattr(web, 'latest_completed_session', lambda: end)
+    monkeypatch.setattr(market_sessions, 'latest_completed_session', lambda: end)
+    pid = profile['id']
+    client.put(f'/api/profiles/{pid}', json={'watchlist': ['AAPL', 'MSFT']})
+
+    def provider(symbol, **kwargs):
+        dates = market_sessions.session_dates(kwargs['start'], end)
+        return bars(dates, price=20 if symbol.startswith('^VIX') else 100)
+
+    with patch.object(data.yf, 'download', side_effect=provider) as download, \
+            patch.object(data, 'symbol_cache', wraps=data.symbol_cache) as cache:
+        first = client.post(f'/api/dashboard/refresh?profile_id={pid}')
+    assert first.status_code == 200 and first.json['success'], first.json
+    assert download.call_count == 5  # two stocks + three shared benchmarks
+    for symbol in ('SPY', '^VIX', '^VIX3M'):
+        assert sum(call.args[0] == symbol for call in cache.call_args_list) == 1
+    assert all(pd.Timestamp(end) - pd.Timestamp(call.kwargs['start']) < pd.Timedelta(days=800)
+               for call in download.call_args_list)
+
+    with patch.object(data.yf, 'download', side_effect=AssertionError('No network on cache hit')) as download, \
+            patch.object(market_cache, 'atomic_json', wraps=market_cache.atomic_json) as write:
+        second = client.post(f'/api/dashboard/refresh?profile_id={pid}')
+    assert second.status_code == 200 and second.json['success'], second.json
+    assert download.call_count == 0
+    assert write.call_count == 0
+
+
+def test_real_refresh_rate_limited_stock_is_not_a_fresh_signal(client, profile, tmp_path, monkeypatch):
+    import data
+    import market_sessions
+    from test_market_data import bars
+
+    end = '2025-07-07'
+    monkeypatch.setattr(data, 'DATA_CACHE_DIR', str(tmp_path / 'market'))
+    monkeypatch.setattr(data, 'latest_completed_session', lambda: end)
+    monkeypatch.setattr(web, 'latest_completed_session', lambda: end)
+    monkeypatch.setattr(market_sessions, 'latest_completed_session', lambda: end)
+    pid = profile['id']
+    client.put(f'/api/profiles/{pid}', json={'watchlist': ['SOXL', 'AAPL']})
+
+    def provider(symbol, **kwargs):
+        if symbol == 'SOXL':
+            raise RuntimeError('Too Many Requests')
+        return bars(market_sessions.session_dates(kwargs['start'], end),
+                    price=20 if symbol.startswith('^VIX') else 100)
+
+    with patch.object(data.yf, 'download', side_effect=provider) as download:
+        first = client.post(f'/api/dashboard/refresh?profile_id={pid}')
+        second = client.post(f'/api/dashboard/refresh?profile_id={pid}')
+    assert first.json['success'] and second.json['success']
+    assert {'ticker': 'SOXL', 'reason': 'data error'} in first.json['data']['no_signals']
+    assert sum(call.args[0] == 'SOXL' for call in download.call_args_list) == 1

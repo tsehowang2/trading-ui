@@ -5,6 +5,8 @@ adjusted. These are NOT guaranteed original historical execution prices. Strateg
 replay uses this split-adjusted price scale consistently; manual ledger never
 replaces actual execution prices with this series.
 """
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 import os
 
@@ -18,6 +20,17 @@ from market_sessions import latest_completed_session, session_dates, session_on_
 DATA_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data_cache')
 POLICY = 'yahoo-split-adjusted-no-dividend-adjustment-v1'
 PRICE_COLUMNS = ['Open', 'High', 'Low', 'Close', 'Volume']
+_batch = ContextVar('market_download_batch', default=None)
+
+
+@contextmanager
+def download_batch():
+    """Reuse benchmark frames within one refresh, never across requests."""
+    token = _batch.set({})
+    try:
+        yield
+    finally:
+        _batch.reset(token)
 
 
 def normalize(frame, cutoff):
@@ -34,7 +47,7 @@ def normalize(frame, cutoff):
     for c in ('Dividends', 'Stock Splits'):
         if c not in frame:
             frame[c] = 0.0
-    frame = frame[PRICE_COLUMNS + ['Dividends', 'Stock Splits']].apply(pd.to_numeric, errors='coerce')
+    frame = frame[PRICE_COLUMNS + ['Dividends', 'Stock Splits']].apply(pd.to_numeric, errors='coerce').astype(float)
     numeric = frame.to_numpy(dtype=float, na_value=np.nan)
     valid = np.isfinite(numeric).all(axis=1) & (frame[['Open', 'High', 'Low', 'Close']] > 0).all(axis=1)
     valid &= (frame['Volume'] >= 0) & (frame['High'] >= frame[['Open', 'Close', 'Low']].max(axis=1))
@@ -48,6 +61,17 @@ def _records(frame):
 
 
 def cached_download(symbol, start, end, force=False):
+    batch = _batch.get()
+    key = (symbol.upper() if isinstance(symbol, str) else symbol, str(start), str(end))
+    if batch is not None and not force and key in batch:
+        return batch[key].copy(deep=True)
+    result = _cached_download(symbol, start, end, force=force)
+    if batch is not None:
+        batch[key] = result.copy(deep=True)
+    return result
+
+
+def _cached_download(symbol, start, end, force=False):
     if not isinstance(symbol, str) or not symbol or len(symbol) > 30 or any(c not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789^.-=' for c in symbol):
         raise ValueError('Invalid market symbol')
     symbol = symbol.upper()
@@ -83,7 +107,7 @@ def cached_download(symbol, start, end, force=False):
             try:
                 raw = yf.download(symbol, start=begin.strftime('%Y-%m-%d'),
                                   end=(pd.Timestamp(cutoff) + pd.Timedelta(days=1)).strftime('%Y-%m-%d'),
-                                  auto_adjust=False, actions=True, progress=False, threads=False)
+                                  auto_adjust=False, actions=True, progress=False, threads=False, timeout=10)
                 fetched = normalize(raw, cutoff)
             except Exception as error:
                 document['last_error'] = type(error).__name__
@@ -95,19 +119,19 @@ def cached_download(symbol, start, end, force=False):
                 if not existing.empty and not new_splits.empty and begin > existing.index.min():
                     raw = yf.download(symbol, start=existing.index.min().strftime('%Y-%m-%d'),
                                       end=(pd.Timestamp(cutoff) + pd.Timedelta(days=1)).strftime('%Y-%m-%d'),
-                                      auto_adjust=False, actions=True, progress=False, threads=False)
+                                      auto_adjust=False, actions=True, progress=False, threads=False, timeout=10)
                     refreshed = normalize(raw, cutoff)
                     if not existing.index.isin(refreshed.index).all():
                         raise ValueError('Incomplete historical refresh after split; cannot mix price scales')
                     # A historical refresh retains bars beyond its cutoff.
                     existing = pd.concat([refreshed, existing.loc[existing.index > pd.Timestamp(cutoff)]])
                 else:
-                    existing = pd.concat([existing, fetched])
+                    existing = fetched.copy() if existing.empty else pd.concat([existing, fetched])
                     existing = existing[~existing.index.duplicated(keep='last')].sort_index()
                     existing.index = pd.DatetimeIndex(existing.index)
             document['attempt'] = dict(session=completed, start=min(attempt.get('start',str(start)[:10]),str(start)[:10]), end=cutoff)
-        document.update(policy=POLICY, symbol=symbol, bars=_records(existing),
-                        checked_at=datetime.now(timezone.utc).isoformat())
+            document['checked_at'] = datetime.now(timezone.utc).isoformat()
+        document.update(policy=POLICY, symbol=symbol, bars=_records(existing))
         existing.index = pd.DatetimeIndex(existing.index)
         result = existing.loc[(existing.index >= pd.Timestamp(start)) & (existing.index <= pd.Timestamp(cutoff))].copy()
         result.attrs['price_policy'] = POLICY

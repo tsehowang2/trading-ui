@@ -2135,10 +2135,12 @@ def get_portfolio_data(holdings_csv: str,
             seen.add(t)
 
     indicators: dict[str, dict | None] = {}
-    for t in all_tickers:
-        indicators[t] = _get_live_indicators(t, min_buy_confidence=min_buy_confidence)
-        if indicator_observer is not None:
-            indicator_observer(indicators[t])
+    from data import download_batch
+    with download_batch():
+        for t in all_tickers:
+            indicators[t] = _get_live_indicators(t, min_buy_confidence=min_buy_confidence)
+            if indicator_observer is not None:
+                indicator_observer(indicators[t])
 
     holdings_value = 0.0
     for h in holdings:

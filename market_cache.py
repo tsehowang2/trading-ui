@@ -26,10 +26,13 @@ def symbol_cache(symbol, directory):
                 cur.execute('SELECT data FROM market_symbol_cache WHERE symbol = %s', (symbol,))
                 row = cur.fetchone()
             document = dict(row['data']) if row else {}
+            original = json.dumps(document, sort_keys=True, allow_nan=False)
             yield document
-            with conn.cursor() as cur:
-                cur.execute('''INSERT INTO market_symbol_cache (symbol,data) VALUES (%s,%s)
-                    ON CONFLICT (symbol) DO UPDATE SET data=EXCLUDED.data''', (symbol, json.dumps(document, allow_nan=False)))
+            updated = json.dumps(document, sort_keys=True, allow_nan=False)
+            if updated != original:
+                with conn.cursor() as cur:
+                    cur.execute('''INSERT INTO market_symbol_cache (symbol,data) VALUES (%s,%s)
+                        ON CONFLICT (symbol) DO UPDATE SET data=EXCLUDED.data''', (symbol, updated))
             conn.commit()
         except Exception:
             conn.rollback()
@@ -45,5 +48,7 @@ def symbol_cache(symbol, directory):
                     document = json.load(source)
             else:
                 document = {}
+            original = json.dumps(document, sort_keys=True, allow_nan=False)
             yield document
-            atomic_json(path, document)
+            if json.dumps(document, sort_keys=True, allow_nan=False) != original:
+                atomic_json(path, document)

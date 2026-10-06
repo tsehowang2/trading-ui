@@ -228,7 +228,12 @@ def frame_revision(frame):
 
 
 def load_frame(symbol, end, downloader, live=False):
-    frames = [downloader(s, HISTORY_START, end) for s in (symbol, 'SPY', '^VIX', '^VIX3M')]
+    start = HISTORY_START
+    if live:
+        from market_sessions import session_dates
+        sessions = session_dates((pd.Timestamp(end) - pd.DateOffset(years=3)).strftime('%Y-%m-%d'), end)
+        start = sessions[-400:].min().strftime('%Y-%m-%d')
+    frames = [downloader(s, start, end) for s in (symbol, 'SPY', '^VIX', '^VIX3M')]
     if frames[0].empty:
         return pd.DataFrame()
     if live:

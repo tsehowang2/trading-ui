@@ -88,3 +88,47 @@ def test_new_split_refreshes_old_price_scale(client,tmp_path,monkeypatch):
         result=data.cached_download('AAPL','2025-07-02','2025-07-07')
     assert download.call_count==3
     assert (result['Close']==50).all()
+
+
+def test_batch_reuses_cache_reads_without_leaking_to_next_refresh(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(data, 'DATA_CACHE_DIR', str(tmp_path / 'market'))
+    monkeypatch.setattr(data, 'latest_completed_session', lambda: '2025-07-03')
+    with patch.object(data, 'symbol_cache', wraps=data.symbol_cache) as cache, \
+            patch.object(data.yf, 'download', return_value=bars(['2025-07-02', '2025-07-03'])) as download:
+        with data.download_batch():
+            first = data.cached_download('SPY', '2025-07-02', '2025-07-03')
+            first.iloc[0, first.columns.get_loc('Close')] = 1
+            second = data.cached_download('SPY', '2025-07-02', '2025-07-03')
+            assert second['Close'].iloc[0] == 100
+        assert cache.call_count == 1
+        with data.download_batch():
+            data.cached_download('SPY', '2025-07-02', '2025-07-03')
+        assert cache.call_count == 2
+        assert download.call_count == 1
+
+
+def test_rate_limit_keeps_saved_bars_and_does_not_repeat_same_session(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(data, 'DATA_CACHE_DIR', str(tmp_path / 'market'))
+    clock = ['2025-07-03']
+    monkeypatch.setattr(data, 'latest_completed_session', lambda: clock[0])
+    with patch.object(data.yf, 'download', side_effect=[
+            bars(['2025-07-02', '2025-07-03']), RuntimeError('Too Many Requests')]) as download:
+        data.cached_download('SOXL', '2025-07-02', clock[0])
+        clock[0] = '2025-07-07'
+        failed = data.cached_download('SOXL', '2025-07-02', clock[0])
+        again = data.cached_download('SOXL', '2025-07-02', clock[0])
+    assert download.call_count == 2
+    assert failed.attrs['missing_sessions'] == ['2025-07-07']
+    pd.testing.assert_frame_equal(failed, again)
+    assert len(failed) == 2
+
+
+def test_empty_provider_response_returns_datetime_index(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(data, 'DATA_CACHE_DIR', str(tmp_path / 'market'))
+    monkeypatch.setattr(data, 'latest_completed_session', lambda: '2025-07-03')
+    with patch.object(data.yf, 'download', return_value=pd.DataFrame()) as download:
+        first = data.cached_download('SOXL', '2025-07-02', '2025-07-03')
+        second = data.cached_download('SOXL', '2025-07-02', '2025-07-03')
+    assert first.empty and second.empty
+    assert isinstance(first.index, pd.DatetimeIndex)
+    assert download.call_count == 1

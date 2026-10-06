@@ -46,3 +46,17 @@ def test_missing_current_vix3m_never_uses_prior_ready_bar(client,tmp_path,monkey
     monkeypatch.setattr(data,'DATA_CACHE_DIR',str(tmp_path/'market'))
     with patch.object(main,'cached_download',side_effect=lambda symbol,start,end:frames[symbol]):
         assert main._get_live_indicators('AAPL',as_of=end) is None
+
+
+def test_live_requests_recent_history_but_backtest_keeps_full_history(client, tmp_path, monkeypatch):
+    frames = downloader_frames()
+    end = frames['AAPL'].index[-1].strftime('%Y-%m-%d')
+    monkeypatch.setattr(data, 'DATA_CACHE_DIR', str(tmp_path / 'market'))
+    with patch.object(main, 'cached_download', side_effect=lambda symbol, start, end: frames[symbol]) as download:
+        main._get_live_indicators('AAPL', as_of=end)
+        assert len(download.call_args_list) == 4
+        assert all(pd.Timestamp(end) - pd.Timestamp(call.args[1]) < pd.Timedelta(days=800)
+                   for call in download.call_args_list)
+        download.reset_mock()
+        main.run_backtest('AAPL', end, end, verbose=False)
+        assert all(call.args[1] == strategy.HISTORY_START for call in download.call_args_list)
